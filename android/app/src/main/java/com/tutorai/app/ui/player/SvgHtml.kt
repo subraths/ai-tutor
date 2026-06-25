@@ -14,12 +14,14 @@ fun buildSvgHtml(svg: String): String = """
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; }
-  #wrap { height: 100%; padding: 8px; box-sizing: border-box; }
-  /* Give the SVG a definite box and let its viewBox + preserveAspectRatio scale
-     the drawing to fit and center it. A percentage-sized SVG with height:auto
-     collapses to zero height in WebView, which left the diagram blank. */
-  #wrap svg { display: block; width: 100%; height: 100%; }
+  html, body { margin: 0; padding: 0; background: #ffffff; }
+  /* Android WebView resolves height:100% / max-height:100% against the html/body
+     chain to ZERO (desktop Chrome does not), which collapsed the SVG and left the
+     page blank. Size the SVG from its own width + intrinsic viewBox ratio — which
+     does not depend on any parent height — and cap it to the viewport so it still
+     fits the pane. */
+  #wrap { box-sizing: border-box; padding: 8px; text-align: center; }
+  #wrap svg { display: inline-block; width: 100%; height: auto; max-height: 96vh; }
   .tutor-hl {
     filter: drop-shadow(0 0 4px #ff9800) drop-shadow(0 0 10px #ffb74d);
     transform: scale(1.04);
