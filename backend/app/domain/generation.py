@@ -1,0 +1,38 @@
+"""Value objects used during generation, plus topic normalization.
+
+These are the intermediate, pre-audio artifacts the agent graph passes around
+(distinct from the final persisted Lesson in models.py).
+"""
+from pydantic import BaseModel, Field
+
+from app.core.errors import InvalidTopicError
+
+DEFAULT_VOICE = "en-US-neutral"
+MAX_TOPIC_LEN = 200
+
+
+class GenerationOptions(BaseModel):
+    language: str = "en"
+    voice: str = DEFAULT_VOICE
+
+
+class ConceptPlan(BaseModel):
+    """Output of the planner node: title + the ordered concepts to visualize."""
+    title: str
+    concepts: list[str]
+
+
+class SegmentDraft(BaseModel):
+    """A narration segment before TTS — text + the SVG ids it should highlight."""
+    text: str
+    svg_element_ids: list[str] = Field(default_factory=list)
+
+
+def normalize_topic(topic: str, language: str = "en") -> str:
+    """Return the cache/idempotency key for a topic, or raise InvalidTopicError."""
+    key = " ".join((topic or "").strip().lower().split())
+    if not key:
+        raise InvalidTopicError("Topic must not be empty.")
+    if len(key) > MAX_TOPIC_LEN:
+        raise InvalidTopicError("Topic is too long.")
+    return f"{key}|{language}"
