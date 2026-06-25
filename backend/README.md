@@ -1,8 +1,12 @@
 # TutorAI Backend
 
-FastAPI backend for TutorAI. **Phase 2 skeleton:** runs end-to-end with **mock**
-providers — no AI keys required. The real LangGraph agent (Phase 3) and Gemini/TTS
-adapters (Phase 4) drop in behind the existing interfaces without touching call sites.
+FastAPI backend for TutorAI. **Phases 2–4 done:** a real LangGraph agent graph
+(plan → svg → narration → validate → repair loop → render → assemble) runs on
+**mock** providers with no key, and on **real Gemini** (`google-genai`) when
+configured — verified live end-to-end. Swap via env: `TUTOR_LLM_PROVIDER`,
+`TUTOR_TTS_PROVIDER` (mock|gemini), `TUTOR_GENERATION_ENGINE` (langgraph|mock),
+`TUTOR_STORAGE_BACKEND` (memory|filesystem). Confirm Gemini model ids with
+`python -m app.tools.list_models`.
 
 ## Layout
 

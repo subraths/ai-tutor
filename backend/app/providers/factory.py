@@ -13,7 +13,10 @@ class ProviderFactory:
         if provider == "mock":
             return MockLLMProvider(self._settings)
         if provider == "gemini":
-            raise NotImplementedError("Gemini LLM provider arrives in Phase 4.")
+            # Local import so mock-only deployments don't require google-genai.
+            from app.providers.gemini import GeminiLLMProvider
+
+            return GeminiLLMProvider(self._settings)
         raise ValueError(f"Unknown llm_provider: {provider!r}")
 
     def create_tts(self) -> TTSProvider:
@@ -21,5 +24,7 @@ class ProviderFactory:
         if provider == "mock":
             return MockTTSProvider(self._settings)
         if provider == "gemini":
-            raise NotImplementedError("Gemini TTS provider arrives in Phase 4.")
+            from app.providers.gemini import GeminiTTSProvider
+
+            return GeminiTTSProvider(self._settings)
         raise ValueError(f"Unknown tts_provider: {provider!r}")

@@ -1,0 +1,20 @@
+I have an idea for a new project. Its about an educational tutoring app.
+Lets say we have a android app frontend that displays what topic do I want to learn
+The user type the topic eg: Photosynthesis and the ai generates svg
+an explanation of the topic and speech. when the llm is talking about 
+certain part of the svg, it also highlights that certain part/parts of the svg,
+to let the user know what part of the svg is being talked about and look 
+more interactive.
+There is also history of all the topics history stored on device
+and can be played and when necessary from local storage.
+
+Lets build this app using android as frontend(in kotlin), fastapi
+to build this app we will 
+follow standard best practices and software development life cycle. 
+We will also implement proper design patterns in python where every 
+necessary. We will first plan using uml diagrams like class, sequence,
+deployment etc diagrams. We'll do it phase by phase and step by step.
+
+For generating SVG, I want to use agentic ai using langchain and langgraph
+Also we'll use gemini for every thing like gemini-3.1-flash or other best 
+suited for our use case.

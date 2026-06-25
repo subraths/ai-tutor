@@ -1,0 +1,25 @@
+# Alternative to the `docker run` in the deploy workflow — handy for running the
+# backend on the EC2 host manually. Set TUTOR_GEMINI_API_KEY in the environment
+# (or a .env file next to this compose file).
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/subraths/ai-tutor-backend:latest}
+    container_name: tutorai-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      TUTOR_ENVIRONMENT: prod
+      TUTOR_LLM_PROVIDER: gemini
+      TUTOR_TTS_PROVIDER: gemini
+      TUTOR_GENERATION_ENGINE: langgraph
+      TUTOR_STORAGE_BACKEND: filesystem
+      TUTOR_DATA_DIR: /data
+      TUTOR_GEMINI_API_KEY: ${TUTOR_GEMINI_API_KEY:?set TUTOR_GEMINI_API_KEY}
+      TUTOR_GEMINI_MODEL: ${TUTOR_GEMINI_MODEL:-gemini-2.5-flash}
+      TUTOR_GEMINI_TTS_MODEL: ${TUTOR_GEMINI_TTS_MODEL:-gemini-3.1-flash-tts-preview}
+    volumes:
+      - tutor-data:/data
+
+volumes:
+  tutor-data:

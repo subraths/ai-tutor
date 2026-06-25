@@ -50,12 +50,67 @@ mockable from day one so backend phases don't depend on live AI keys.
 | **SVG security** (injected script) | Client risk | Sanitize SVG; if WebView, disable JS-from-content / restrict to our own highlight script |
 | **Renderer choice** (WebView vs native) | Rework | Phase-6 spike behind a `HighlightEngine` interface before committing |
 
-## 8.5 Immediate next step
+## 8.5 Progress
 
-Proceed to **Phase 2 — Backend skeleton**:
-1. Scaffold `backend/` (FastAPI, Pydantic schemas from [03](03-domain-model.md)/[06](06-api-contract.md), typed `Settings`, error envelope, `/healthz`).
-2. Define `LLMProvider` / `TTSProvider` / repository **interfaces** + **mock** implementations.
-3. Wire `POST /lessons` → facade → mock graph → manifest, with the async job model.
+- **Phase 2 ✅** — Backend skeleton: FastAPI + mock providers, async job model,
+  in-memory repos, deterministic validator gate, error envelope. 16 tests.
+- **Phase 3 ✅** — Real LangGraph `StateGraph` (`app/agents/langgraph_graph.py`)
+  implementing the `GenerationGraph` port: planner → svg → narration → validate
+  with a conditional **repair loop** (bounded by `max_repair_retries`) → render →
+  assemble. Drives the same provider ports, so still runs on mocks. 21 tests
+  (incl. repair-recovery and exhausted-retries failure).
+- **Phase 4 ✅** — Real Gemini providers (`app/providers/gemini.py`) via google-genai:
+  structured-output planning/narration/repair, SVG generation, and TTS (PCM→WAV with
+  exact byte-derived duration), with transient-error retry/backoff. Filesystem asset +
+  lesson repositories. `python -m app.tools.list_models` confirms model ids.
+  **Verified live (2026-06-25):** a real Photosynthesis lesson — 7 segments, valid SVG
+  with semantic ids, narration consistent (validator passed), real WAV audio. 43 tests
+  (Gemini adapters covered via a faked SDK client, so the suite stays key-free).
+  Verified models: text `gemini-2.5-flash` / `gemini-2.5-flash-lite`; TTS
+  `gemini-3.1-flash-tts-preview`.
 
-This delivers a runnable end-to-end backend with **no AI keys required**, ready for the
-real graph in Phase 3.
+- **Phase 5 ✅** — Android skeleton (`android/`): Kotlin + Compose, MVVM + Clean
+  Architecture (domain/data/ui), Retrofit `TutorApi`, `LessonRepositoryImpl` that does
+  the **async job polling**, `TopicScreen` that generates a lesson and renders its
+  manifest (title, segments, highlight ids, durations). Manual `AppContainer` DI.
+  **Verified:** `:app:assembleDebug` builds `app-debug.apk` (AGP 8.9.1 / Gradle 8.13 /
+  Kotlin 2.1.0 / compileSdk 35). Decision: chose manual DI over Hilt for build
+  reliability (deviates from [07](07-android-architecture.md) §7.1; Hilt swappable later).
+
+- **Phase 6 ✅** — Player + highlight sync (`android/.../ui/player/`): SVG rendered in a
+  WebView (inline SVG + `highlight()`/`clearHighlight()` JS, glow+scale CSS); ExoPlayer
+  plays one clip per segment as a playlist, and `currentMediaItemIndex` drives the
+  WebView highlight of that segment's `svg_element_ids`. Transport: Prev/Play-Pause/
+  Next/Replay + live caption. Asset URLs resolved to absolute against the base URL.
+  **Build verified** (`:app:assembleDebug`). Not yet run on a device (no AVD here), and
+  real audio playback needs the **gemini** backend (mock audio bytes won't decode).
+
+- **Phase 7 ✅** — Offline & history (`android/.../data/local/`, `ui/history/`): Room
+  (`LessonEntity`/`SegmentEntity` + DAO, SQL compile-checked by KSP) + `LessonFileStore`.
+  "Save offline" downloads the svg + every audio clip to app-private files and persists
+  rows; History screen lists saved lessons (newest first) with delete; the player is
+  source-agnostic (a `loader` lambda) so saved lessons load from **local file URIs** and
+  replay with **no network**. **Build verified** (KSP generated `LessonDao_Impl`).
+
+> **Original product spec is now feature-complete** (Phases 1–7): topic → narrated,
+> highlight-synced SVG lesson, with on-device history and offline replay.
+
+- **Phase 8 ✅** — Hardening & CI/CD (see [09](09-cicd.md)). Backend wired to real
+  providers/storage by config (`generation_engine=langgraph` default; gemini LLM/TTS;
+  memory|filesystem storage). GitHub Actions: `backend-ci` (pytest + `docker build`),
+  `backend-deploy` (GHCR → SSH deploy to EC2), `android-ci` (`assembleDebug` artifact),
+  `android-release` (signed APK → GitHub Release, debug-key fallback). Containerized
+  backend (`Dockerfile`/`docker-compose.yml`) with `/healthz` healthcheck. The test
+  suite is **hermetic** — a session fixture disables `.env` loading and strips `TUTOR_*`
+  vars so the 43 tests stay key-free and never touch the live API. **Verified locally:**
+  43 tests green (0 live API calls); `docker build` + container smoke (`/healthz` 200,
+  `POST /api/v1/lessons` 202 on mock providers, no key); Android release signing/BASE_URL
+  wiring consumes the workflow env vars.
+
+### Remaining (release)
+
+- **Phase 9** — release prep: app icon, signing, perf pass, deploy profile for the backend.
+
+Run on a device to exercise runtime (no AVD in the build env yet). Optional backend
+add-on (deepagents topic *researcher/planner* behind `LLMProvider.plan_concepts`)
+remains deferred — would not change the deterministic core.

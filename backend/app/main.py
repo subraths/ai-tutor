@@ -14,7 +14,7 @@ from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging
 from app.providers.base import LLMProvider, TTSProvider
 from app.providers.factory import ProviderFactory
-from app.repositories.base import AssetRepository
+from app.repositories.base import AssetRepository, LessonRepository
 from app.repositories.memory import (
     InMemoryAssetRepository,
     InMemoryJobRepository,
@@ -33,12 +33,34 @@ def _build_graph(
     if settings.generation_engine == "mock":
         return MockGenerationGraph(llm, tts, assets, settings)
     if settings.generation_engine == "langgraph":
-        raise NotImplementedError("LangGraph engine arrives in Phase 3.")
+        # Local import so a mock-only deployment doesn't require langgraph.
+        from app.agents.langgraph_graph import LangGraphGenerationGraph
+
+        return LangGraphGenerationGraph(llm, tts, assets, settings)
     raise ValueError(f"Unknown generation_engine: {settings.generation_engine!r}")
 
 
-def create_app() -> FastAPI:
-    settings = get_settings()
+def _build_storage(settings: Settings) -> tuple[LessonRepository, AssetRepository]:
+    if settings.storage_backend == "memory":
+        return (
+            InMemoryLessonRepository(),
+            InMemoryAssetRepository(settings.asset_base_url),
+        )
+    if settings.storage_backend == "filesystem":
+        from app.repositories.filesystem import (
+            FilesystemAssetRepository,
+            FilesystemLessonRepository,
+        )
+
+        return (
+            FilesystemLessonRepository(settings.data_dir),
+            FilesystemAssetRepository(settings.asset_base_url, settings.data_dir),
+        )
+    raise ValueError(f"Unknown storage_backend: {settings.storage_backend!r}")
+
+
+def create_app(settings: Settings | None = None) -> FastAPI:
+    settings = settings or get_settings()
     configure_logging()
 
     app = FastAPI(title=settings.app_name, version="0.1.0")
@@ -48,8 +70,7 @@ def create_app() -> FastAPI:
     llm = factory.create_llm()
     tts = factory.create_tts()
 
-    lesson_repo = InMemoryLessonRepository()
-    asset_repo = InMemoryAssetRepository(settings.asset_base_url)
+    lesson_repo, asset_repo = _build_storage(settings)
     job_repo = InMemoryJobRepository()
 
     graph = _build_graph(settings, llm, tts, asset_repo)

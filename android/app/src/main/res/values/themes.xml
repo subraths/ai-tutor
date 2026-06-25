@@ -1,0 +1,4 @@
+<resources>
+    <!-- Base manifest theme; Compose applies the real Material 3 theme at runtime. -->
+    <style name="Theme.TutorAI" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

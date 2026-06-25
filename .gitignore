@@ -1,0 +1,31 @@
+# OS / editors
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Secrets / env
+.env
+*.keystore
+*.jks
+
+# Python (backend)
+__pycache__/
+*.pyc
+backend/.venv/
+backend/data/
+.pytest_cache/
+*.egg-info/
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/.kotlin/
+
+# Misc
+prompt.txt
+
+# Editor/extension cruft (VS Code "App Modernization for Java")
+.github/modernize/
