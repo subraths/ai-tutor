@@ -1,13 +1,19 @@
-# Alternative to the `docker run` in the deploy workflow — handy for running the
-# backend on the EC2 host manually. Set TUTOR_GEMINI_API_KEY in the environment
-# (or a .env file next to this compose file).
+# Backend behind Caddy (automatic HTTPS via Let's Encrypt). Used by the
+# backend-deploy workflow on the EC2 host. Required in a sibling `.env` file:
+#   BACKEND_IMAGE         e.g. ghcr.io/subraths/ai-tutor-backend:latest
+#   BACKEND_DOMAIN        public hostname — a real domain, or <ec2-ip>.sslip.io
+#   TUTOR_GEMINI_API_KEY  your Gemini key
+#
+# Public traffic: phone -> https://BACKEND_DOMAIN (Caddy :443) -> backend :8000.
 services:
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/subraths/ai-tutor-backend:latest}
     container_name: tutorai-backend
     restart: unless-stopped
+    # Not published to the internet — Caddy reaches it over the compose network.
+    # Bound to loopback only so you can `curl localhost:8000` on the host to debug.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       TUTOR_ENVIRONMENT: prod
       TUTOR_LLM_PROVIDER: gemini
@@ -21,5 +27,23 @@ services:
     volumes:
       - tutor-data:/data
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: tutorai-caddy
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?set BACKEND_DOMAIN (a real domain or <ec2-ip>.sslip.io)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # persisted certs — survives redeploys, avoids ACME rate limits
+      - caddy-config:/config
+
 volumes:
   tutor-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,14 @@
+# Automatic HTTPS (Let's Encrypt) for BACKEND_DOMAIN, reverse-proxied to the
+# FastAPI backend on the internal compose network.
+#
+# BACKEND_DOMAIN must be a PUBLIC hostname that resolves to this host:
+#   - a real domain you own (e.g. api.example.com -> the EC2 IP), or
+#   - <ec2-ip>.sslip.io  (sslip.io resolves the embedded IP, and Let's Encrypt
+#     will still issue a trusted cert for it — handy when you only have an IP).
+#
+# Caddy provisions and renews the TLS certificate on its own; ports 80 and 443
+# must be reachable for the ACME challenge.
+{$BACKEND_DOMAIN} {
+	encode gzip
+	reverse_proxy backend:8000
+}

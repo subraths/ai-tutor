@@ -29,3 +29,5 @@ prompt.txt
 
 # Editor/extension cruft (VS Code "App Modernization for Java")
 .github/modernize/
+
+*.pem

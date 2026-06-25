@@ -54,7 +54,20 @@ jobs:
     needs: build-push
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy over SSH
+      - uses: actions/checkout@v4
+
+      # Ship the compose file + Caddyfile so the host runs from repo source.
+      - name: Copy compose + Caddyfile to host
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "backend/docker-compose.yml,backend/Caddyfile"
+          target: tutorai
+          strip_components: 1
+
+      - name: Deploy with docker compose (backend + Caddy/HTTPS)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -62,19 +75,17 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
+            cd ~/tutorai
+            # Compose auto-loads this .env (kept out of the image; host-local).
+            cat > .env <<EOF
+            BACKEND_IMAGE=${{ needs.build-push.outputs.image }}:latest
+            BACKEND_DOMAIN=${{ secrets.BACKEND_DOMAIN }}
+            TUTOR_GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            EOF
+            chmod 600 .env
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            IMAGE="${{ needs.build-push.outputs.image }}:latest"
-            docker pull "$IMAGE"
+            # Remove a pre-compose standalone container from the old `docker run` deploy.
             docker rm -f tutorai-backend 2>/dev/null || true
-            docker run -d --name tutorai-backend --restart unless-stopped \
-              -p 8000:8000 \
-              -e TUTOR_ENVIRONMENT=prod \
-              -e TUTOR_LLM_PROVIDER=gemini \
-              -e TUTOR_TTS_PROVIDER=gemini \
-              -e TUTOR_GENERATION_ENGINE=langgraph \
-              -e TUTOR_STORAGE_BACKEND=filesystem \
-              -e TUTOR_DATA_DIR=/data \
-              -e TUTOR_GEMINI_API_KEY='${{ secrets.GEMINI_API_KEY }}' \
-              -v tutor-data:/data \
-              "$IMAGE"
+            docker compose pull
+            docker compose up -d
             docker image prune -f
