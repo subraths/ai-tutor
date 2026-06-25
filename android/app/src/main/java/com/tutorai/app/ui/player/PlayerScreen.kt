@@ -110,12 +110,22 @@ private fun PlayerContent(lesson: Lesson, svg: String, onBack: () -> Unit) {
             factory = { ctx ->
                 WebView(ctx).apply {
                     settings.javaScriptEnabled = true
+                    // Honour our <meta viewport> so the SVG lays out against the
+                    // device width, and fit the content to the view.
+                    settings.useWideViewPort = true
+                    settings.loadWithOverviewMode = true
+                    settings.domStorageEnabled = true
+                    setBackgroundColor(android.graphics.Color.WHITE)
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             pageLoaded = true
                         }
                     }
-                    loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
+                    // A non-null https base URL renders more reliably than null.
+                    loadDataWithBaseURL(
+                        "https://appassets.androidplatform.net/",
+                        html, "text/html", "utf-8", null,
+                    )
                     webView = this
                 }
             },
