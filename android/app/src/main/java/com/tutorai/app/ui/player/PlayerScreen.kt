@@ -1,5 +1,9 @@
 package com.tutorai.app.ui.player
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +38,7 @@ import com.tutorai.app.domain.model.Lesson
 
 @Composable
 fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
+    ForceLandscape()
     val state by viewModel.state.collectAsState()
     Box(Modifier.fillMaxSize()) {
         when (val s = state) {
@@ -153,4 +158,27 @@ private fun CenteredMessage(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, style = MaterialTheme.typography.bodyLarge)
     }
+}
+
+/** Lock the explanation screen to landscape (the diagrams are wide), restoring the
+ *  previous orientation when the player leaves the composition. The activity's
+ *  `configChanges` means this rotation doesn't recreate it, so playback continues. */
+@Composable
+private fun ForceLandscape() {
+    val context = LocalContext.current
+    DisposableEffect(Unit) {
+        val activity = context.findActivity()
+        val previous = activity?.requestedOrientation
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        onDispose {
+            activity?.requestedOrientation =
+                previous ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }

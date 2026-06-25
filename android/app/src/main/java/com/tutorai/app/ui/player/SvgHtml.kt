@@ -15,8 +15,11 @@ fun buildSvgHtml(svg: String): String = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <style>
   html, body { margin: 0; padding: 0; height: 100%; background: #ffffff; }
-  #wrap { display: flex; align-items: center; justify-content: center; height: 100%; padding: 8px; box-sizing: border-box; }
-  #wrap svg { max-width: 100%; max-height: 100%; height: auto; }
+  #wrap { height: 100%; padding: 8px; box-sizing: border-box; }
+  /* Give the SVG a definite box and let its viewBox + preserveAspectRatio scale
+     the drawing to fit and center it. A percentage-sized SVG with height:auto
+     collapses to zero height in WebView, which left the diagram blank. */
+  #wrap svg { display: block; width: 100%; height: 100%; }
   .tutor-hl {
     filter: drop-shadow(0 0 4px #ff9800) drop-shadow(0 0 10px #ffb74d);
     transform: scale(1.04);

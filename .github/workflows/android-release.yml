@@ -26,9 +26,9 @@ jobs:
       # Point the released app at your deployed backend (falls back to 10.0.2.2).
       BACKEND_BASE_URL: ${{ secrets.BACKEND_BASE_URL }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
@@ -48,7 +48,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew :app:assembleRelease --no-daemon
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: tutorai-release-apk
           path: android/app/build/outputs/apk/release/*.apk
