@@ -17,11 +17,14 @@ import kotlinx.coroutines.launch
  *
  * [saver], when provided, lets the player save a just-generated (remote) lesson
  * for offline replay. Offline lessons loaded from the library pass `saver = null`
- * and start out already-saved.
+ * and start out already-saved. [savedChecker] refreshes the saved state on load
+ * (remote lessons are auto-saved at generation, so they are usually already on
+ * device by the time the player opens).
  */
 class PlayerViewModel(
     private val loader: suspend () -> Pair<Lesson, String>,
     private val saver: (suspend (Lesson) -> Unit)? = null,
+    private val savedChecker: (suspend () -> Boolean)? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow<PlayerUiState>(PlayerUiState.Loading)
@@ -44,6 +47,7 @@ class PlayerViewModel(
                 val (lesson, svg) = loader()
                 loadedLesson = lesson
                 _state.value = PlayerUiState.Ready(lesson, svg)
+                savedChecker?.let { _savedOffline.value = it() }
             } catch (e: Exception) {
                 _state.value = PlayerUiState.Error(e.message ?: "Failed to load lesson")
             }
@@ -67,9 +71,10 @@ class PlayerViewModel(
     companion object {
         fun factory(
             saver: (suspend (Lesson) -> Unit)? = null,
+            savedChecker: (suspend () -> Boolean)? = null,
             loader: suspend () -> Pair<Lesson, String>,
         ) = viewModelFactory {
-            initializer { PlayerViewModel(loader, saver) }
+            initializer { PlayerViewModel(loader, saver, savedChecker) }
         }
     }
 }

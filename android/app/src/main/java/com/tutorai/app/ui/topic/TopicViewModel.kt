@@ -37,20 +37,25 @@ class TopicViewModel(
         _saveState.value = SaveState.Idle
         viewModelScope.launch {
             generateLesson(topic).collect { status ->
-                _uiState.value = when (status) {
+                when (status) {
                     is GenerationStatus.InProgress ->
-                        TopicUiState.Generating(status.stage, status.progress)
-                    is GenerationStatus.Completed ->
-                        TopicUiState.Success(status.lesson)
+                        _uiState.value = TopicUiState.Generating(status.stage, status.progress)
+                    is GenerationStatus.Completed -> {
+                        _uiState.value = TopicUiState.Success(status.lesson)
+                        // Persist every generated lesson to the device automatically.
+                        save(status.lesson)
+                    }
                     is GenerationStatus.Failed ->
-                        TopicUiState.Error(status.message)
+                        _uiState.value = TopicUiState.Error(status.message)
                 }
             }
         }
     }
 
+    /** Save a lesson for offline use. Called automatically on generation, and
+     *  again by the UI's "Retry" affordance if the automatic save failed. */
     fun save(lesson: Lesson) {
-        if (_saveState.value == SaveState.Saving) return
+        if (_saveState.value == SaveState.Saving || _saveState.value == SaveState.Saved) return
         viewModelScope.launch {
             _saveState.value = SaveState.Saving
             _saveState.value = try {

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,18 +27,18 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedIconButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
@@ -289,7 +290,6 @@ private fun LessonResultCard(
     onSaveOffline: () -> Unit,
 ) {
     val spacing = LocalSpacing.current
-    val saved = saveState is SaveState.Saved
     Column(modifier = Modifier.fillMaxWidth().padding(top = spacing.s)) {
         // "Lesson ready" pill
         Surface(
@@ -332,50 +332,63 @@ private fun LessonResultCard(
                         MetaItem(TutorIcons.Segments, "${lesson.segments.size} segments")
                         MetaItem(TutorIcons.Clock, durationLabel(lesson.totalDurationMs))
                     }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(spacing.m),
-                        modifier = Modifier.padding(top = spacing.l),
+                    Button(
+                        onClick = onPlay,
+                        modifier = Modifier
+                            .padding(top = spacing.l)
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = ScholarShapeTokens.Field,
                     ) {
-                        Button(
-                            onClick = onPlay,
-                            modifier = Modifier.weight(1f).height(52.dp),
-                            shape = ScholarShapeTokens.Field,
-                        ) {
-                            Icon(TutorIcons.Play, contentDescription = null)
-                            Spacer(Modifier.width(spacing.s))
-                            Text("Play lesson", style = MaterialTheme.typography.labelLarge)
-                        }
-                        if (saved) {
-                            FilledTonalIconButton(
-                                onClick = {},
-                                enabled = false,
-                                modifier = Modifier.size(56.dp, 52.dp),
-                                shape = ScholarShapeTokens.Field,
-                            ) { Icon(TutorIcons.Saved, contentDescription = "Saved offline") }
-                        } else {
-                            OutlinedIconButton(
-                                onClick = onSaveOffline,
-                                enabled = saveState !is SaveState.Saving,
-                                modifier = Modifier.size(56.dp, 52.dp),
-                                shape = ScholarShapeTokens.Field,
-                            ) { Icon(TutorIcons.Save, contentDescription = "Save offline") }
-                        }
+                        Icon(TutorIcons.Play, contentDescription = null)
+                        Spacer(Modifier.width(spacing.s))
+                        Text("Play lesson", style = MaterialTheme.typography.labelLarge)
                     }
-                    when (saveState) {
-                        is SaveState.Saved -> SaveNote(
-                            text = "Saved offline — available in History",
-                            color = LocalExtendedColors.current.success,
-                            icon = TutorIcons.Check,
-                        )
-                        is SaveState.Error -> SaveNote(
-                            text = "Couldn't save: ${saveState.message}",
-                            color = MaterialTheme.colorScheme.error,
-                            icon = TutorIcons.Error,
-                        )
-                        else -> Unit
-                    }
+                    // Lessons are saved to the device automatically — show status only.
+                    AutoSaveStatus(saveState = saveState, onRetry = onSaveOffline)
                 }
             }
+        }
+    }
+}
+
+/** Passive feedback for the automatic offline save: saving → saved, or retry on failure. */
+@Composable
+private fun AutoSaveStatus(saveState: SaveState, onRetry: () -> Unit) {
+    val spacing = LocalSpacing.current
+    when (saveState) {
+        is SaveState.Saved -> SaveNote(
+            text = "Saved offline — available in History",
+            color = LocalExtendedColors.current.success,
+            icon = TutorIcons.Check,
+        )
+        is SaveState.Error -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = spacing.m),
+        ) {
+            Icon(TutorIcons.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(spacing.s))
+            Text(
+                "Couldn't save offline",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onRetry, contentPadding = PaddingValues(horizontal = spacing.s)) {
+                Text("Retry", style = MaterialTheme.typography.labelMedium)
+            }
+        }
+        else -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = spacing.m),
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(spacing.s))
+            Text(
+                "Saving for offline…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

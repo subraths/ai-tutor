@@ -98,6 +98,7 @@ fun TutorNavHost(container: AppContainer) {
             val vm: PlayerViewModel = viewModel(
                 factory = PlayerViewModel.factory(
                     saver = { lesson -> container.saveLessonUseCase(lesson) },
+                    savedChecker = { container.libraryRepository.isSaved(id) },
                 ) {
                     val lesson = repo.getLesson(id)
                     lesson to repo.getSvg(lesson.svgUrl)
