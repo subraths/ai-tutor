@@ -102,44 +102,36 @@ fun DiagramWebView(
 }
 
 private fun WebView.postHighlight(ids: List<String>) {
+    // Always route through highlight(): it both highlights and zooms the viewBox to
+    // the target section (empty list → zoom back out to the whole diagram).
     val arg = JSONArray(ids).toString()       // safe JSON array, e.g. ["sun","ray1"]
-    val js = if (ids.isEmpty()) "clearHighlight();" else "highlight($arg);"
-    evaluateJavascript(js, null)
+    evaluateJavascript("highlight($arg);", null)
 }
 
 private fun colorHex(argb: Int): String = String.format("#%06X", 0xFFFFFF and argb)
 
 /**
  * Wrap raw SVG markup in a self-contained HTML page exposing `highlight(ids)` /
- * `clearHighlight()`.
+ * `clearHighlight()`, plus a viewBox-driven "zoom to the highlighted section".
  *
- * Android WebView does NOT give an inline `<svg>` an intrinsic height, so
- * height:auto/100% resolve to zero and the diagram never paints (desktop Chrome
- * derives the height from the viewBox, which is why it looks fine there). We
- * reserve the height from the element's definite width using the viewBox aspect
- * ratio (the padding-bottom trick) and absolutely-position the SVG to fill that
- * box — no reliance on intrinsic SVG sizing at all.
+ * The SVG is given a definite full-size box (a 100%-height html/body/frame chain)
+ * and `preserveAspectRatio="xMidYMid meet"`, so the content — and every zoomed
+ * section — stays centred in the WebView both horizontally and vertically.
+ * `ensureInit()` guarantees a viewBox even if the source SVG omits one, so the
+ * WebView never has to derive an intrinsic height (which Android WebView won't).
  *
  * @param glowHex the theme amber so the highlight glow matches light/dark.
  */
 private fun buildSvgHtml(svg: String, glowHex: String): String {
-    val ratioPct = Regex(
-        """viewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([-\d.]+)\s+([-\d.]+)""",
-    ).find(svg)?.let { m ->
-        val w = m.groupValues[1].toFloatOrNull()
-        val h = m.groupValues[2].toFloatOrNull()
-        if (w != null && h != null && w > 0f) (h / w * 100f) else null
-    } ?: 60f // sensible default (1000x600) when no viewBox is present
-
     return """
 <!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <style>
-  html, body { margin: 0; padding: 0; background: transparent; }
-  #frame { position: relative; width: 100%; height: 0; padding-bottom: ${ratioPct}%; }
-  #frame svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
+  #frame { width: 100%; height: 100%; }
+  #frame svg { display: block; width: 100%; height: 100%; }
   .tutor-hl {
     filter: drop-shadow(0 0 5px $glowHex) drop-shadow(0 0 12px $glowHex);
     transform: scale(1.04);
@@ -152,6 +144,97 @@ private fun buildSvgHtml(svg: String, glowHex: String): String {
 <body>
 <div id="frame">$svg</div>
 <script>
+  var svgEl = null, ORIG = null, animId = null;
+
+  function getSvg() {
+    if (!svgEl) svgEl = document.querySelector('#frame svg');
+    return svgEl;
+  }
+
+  function parseVB(s) {
+    if (!s) return null;
+    var p = s.trim().split(/[\s,]+/).map(Number);
+    return (p.length === 4 && p[2] > 0 && p[3] > 0) ? p : null;
+  }
+
+  // Capture the diagram's full extent once, and make sure it has a viewBox we can animate.
+  function ensureInit() {
+    var s = getSvg();
+    if (!s || ORIG) return;
+    ORIG = parseVB(s.getAttribute('viewBox'));
+    if (!ORIG) {
+      try { var b = s.getBBox(); if (b && b.width > 0 && b.height > 0) ORIG = [b.x, b.y, b.width, b.height]; } catch (e) {}
+    }
+    if (!ORIG) ORIG = [0, 0, parseFloat(s.getAttribute('width')) || 1000, parseFloat(s.getAttribute('height')) || 600];
+    s.setAttribute('viewBox', ORIG.join(' '));
+    s.setAttribute('preserveAspectRatio', 'xMidYMid meet'); // keeps the focused box centered
+  }
+
+  // Union bounding box (in SVG user units) of the given elements, via screen CTM
+  // so element/group transforms are handled correctly.
+  function unionBox(els) {
+    var s = getSvg(); if (!s || !s.getScreenCTM) return null;
+    var inv = s.getScreenCTM().inverse();
+    var minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity, found = false;
+    els.forEach(function (el) {
+      if (!el || !el.getBoundingClientRect) return;
+      var r = el.getBoundingClientRect();
+      if (!r || (r.width === 0 && r.height === 0)) return;
+      [[r.left, r.top], [r.right, r.top], [r.left, r.bottom], [r.right, r.bottom]].forEach(function (c) {
+        var pt = s.createSVGPoint(); pt.x = c[0]; pt.y = c[1];
+        var u = pt.matrixTransform(inv);
+        if (u.x < minx) minx = u.x;
+        if (u.y < miny) miny = u.y;
+        if (u.x > maxx) maxx = u.x;
+        if (u.y > maxy) maxy = u.y;
+        found = true;
+      });
+    });
+    return found ? [minx, miny, maxx - minx, maxy - miny] : null;
+  }
+
+  function animateVB(target, dur) {
+    var s = getSvg(); if (!s || !target) return;
+    var start = parseVB(s.getAttribute('viewBox')) || ORIG;
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    if (animId) cancelAnimationFrame(animId);
+    function frame(now) {
+      var t = Math.min(1, (now - t0) / dur);
+      var e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOutQuad
+      var vb = [0, 1, 2, 3].map(function (i) { return start[i] + (target[i] - start[i]) * e; });
+      s.setAttribute('viewBox', vb.join(' '));
+      if (t < 1) animId = requestAnimationFrame(frame);
+    }
+    animId = requestAnimationFrame(frame);
+  }
+
+  // Zoom + pan so the highlighted section is centered and fills the WebView.
+  function focusOn(ids) {
+    ensureInit();
+    var s = getSvg(); if (!s || !ORIG) return;
+    if (!ids || !ids.length) { animateVB(ORIG, 500); return; }
+    var els = ids.map(function (id) { return document.getElementById(id); }).filter(Boolean);
+    var box = unionBox(els);
+    if (!box) { animateVB(ORIG, 500); return; }
+
+    // breathing room around the section
+    var px = box[2] * 0.14, py = box[3] * 0.14;
+    box = [box[0] - px, box[1] - py, box[2] + 2 * px, box[3] + 2 * py];
+
+    // don't over-zoom on a tiny target
+    var minW = ORIG[2] * 0.25, minH = ORIG[3] * 0.25;
+    if (box[2] < minW) { box[0] -= (minW - box[2]) / 2; box[2] = minW; }
+    if (box[3] < minH) { box[1] -= (minH - box[3]) / 2; box[3] = minH; }
+
+    // expand to the WebView's aspect ratio (around the section's centre) so the
+    // section is centred with no letterboxing
+    var rect = s.getBoundingClientRect();
+    var aspect = (rect.height > 0) ? rect.width / rect.height : ORIG[2] / ORIG[3];
+    var cx = box[0] + box[2] / 2, cy = box[1] + box[3] / 2, w = box[2], h = box[3];
+    if (w / h < aspect) w = h * aspect; else h = w / aspect;
+    animateVB([cx - w / 2, cy - h / 2, w, h], 500);
+  }
+
   function clearHighlight() {
     document.querySelectorAll('.tutor-hl').forEach(function (e) { e.classList.remove('tutor-hl'); });
   }
@@ -161,7 +244,10 @@ private fun buildSvgHtml(svg: String, glowHex: String): String {
       var el = document.getElementById(id);
       if (el) el.classList.add('tutor-hl');
     });
+    focusOn(ids || []);
   }
+
+  ensureInit();
 </script>
 </body>
 </html>
