@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import TypedDict
 
 from app.agents.validator import ValidationResult
-from app.domain.generation import ConceptPlan, GenerationOptions, SegmentDraft
+from app.domain.generation import ConceptPlan, GenerationOptions, SegmentDraft, SvgCritique
 from app.domain.models import Lesson
 
 
@@ -24,6 +24,8 @@ class GenerationState(TypedDict, total=False):
     # produced along the way
     plan: ConceptPlan
     svg: str
+    critique: SvgCritique
+    svg_refines: int
     drafts: list[SegmentDraft]
     validation: ValidationResult
     retries: int

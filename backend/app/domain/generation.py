@@ -28,6 +28,21 @@ class SegmentDraft(BaseModel):
     svg_element_ids: list[str] = Field(default_factory=list)
 
 
+class SvgCritique(BaseModel):
+    """A design review of a generated SVG (the output of the critique model).
+
+    Drives the agentic critique -> refine loop: while the score is below the
+    configured threshold (and the iteration budget remains), the SVG is refined.
+    """
+    score: int = Field(ge=0, le=10, description="overall visual quality, 0-10")
+    issues: list[str] = Field(
+        default_factory=list, description="concrete, specific problems to fix"
+    )
+
+    def acceptable(self, threshold: int) -> bool:
+        return self.score >= threshold
+
+
 def normalize_topic(topic: str, language: str = "en") -> str:
     """Return the cache/idempotency key for a topic, or raise InvalidTopicError."""
     key = " ".join((topic or "").strip().lower().split())

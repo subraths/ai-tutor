@@ -7,7 +7,7 @@ SDK/orchestration code. The two hard contracts the rest of the system relies on:
 """
 import json
 
-from app.domain.generation import ConceptPlan, SegmentDraft
+from app.domain.generation import ConceptPlan, SegmentDraft, SvgCritique
 
 _PLAN = """You are an expert tutor and educational illustrator.
 Plan a short, visual lesson for the topic below.
@@ -93,6 +93,48 @@ Return the corrected SVG and the corrected segments. Requirements:
   elements as needed, but keep the ids and the meaning intact."""
 
 
+_CRITIQUE = """You are a meticulous design reviewer for educational diagrams.
+Critically evaluate the SVG diagram for this lesson.
+
+Topic: {topic}
+Concepts that must ALL be depicted, in order:
+{concepts}
+
+SVG:
+{svg}
+
+Score the diagram 0-10 for overall quality, judging:
+- Completeness: every concept above is clearly represented.
+- Layout: NO overlapping text or shapes; nothing clipped or outside the viewBox;
+  generous spacing; a clear reading order.
+- Legibility: readable labels, good contrast, sensible font sizes.
+- Clarity: arrows/connectors make the relationships obvious.
+
+List the specific, concrete problems to fix (an empty list if there are none). Be
+strict: any overlap, clipping, or unreadable label means a score of 6 or below."""
+
+_REFINE = """Improve this SVG diagram to fix the reviewer's issues. Produce a
+genuinely BETTER diagram (not a minimal patch), keeping the same concepts and
+stable, semantic ids.
+
+Topic: {topic}
+Concepts to depict, in order:
+{concepts}
+
+Reviewer score: {score}/10
+Issues to fix:
+{issues}
+
+Current SVG:
+{svg}
+
+Output ONLY the improved SVG (starting with <svg ...> and ending with </svg>).
+Keep a viewBox; no <script> or external references. Apply all layout rules: no
+overlapping text or shapes, nothing clipped or outside the viewBox, generous
+spacing, legible labels, every concept clearly shown, and a stable, semantic id
+on every meaningful element."""
+
+
 def plan_prompt(topic: str, language: str) -> str:
     return _PLAN.format(topic=topic, language=language)
 
@@ -110,3 +152,16 @@ def repair_prompt(svg: str, segments: list[SegmentDraft], errors: list[str]) -> 
     seg_json = json.dumps([s.model_dump() for s in segments], indent=2)
     err_text = "\n".join(f"- {e}" for e in errors)
     return _REPAIR.format(errors=err_text, svg=svg, segments=seg_json)
+
+
+def critique_prompt(topic: str, plan: ConceptPlan, svg: str) -> str:
+    concepts = "\n".join(f"  {i + 1}. {c}" for i, c in enumerate(plan.concepts))
+    return _CRITIQUE.format(topic=topic, concepts=concepts, svg=svg)
+
+
+def refine_prompt(topic: str, plan: ConceptPlan, svg: str, critique: SvgCritique) -> str:
+    concepts = "\n".join(f"  {i + 1}. {c}" for i, c in enumerate(plan.concepts))
+    issues = "\n".join(f"- {x}" for x in critique.issues) or "- (raise overall quality)"
+    return _REFINE.format(
+        topic=topic, concepts=concepts, score=critique.score, issues=issues, svg=svg
+    )

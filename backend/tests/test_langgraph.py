@@ -5,7 +5,12 @@ from app.agents.langgraph_graph import LangGraphGenerationGraph
 from app.agents.validator import validate
 from app.core.config import Settings
 from app.core.errors import GenerationFailedError
-from app.domain.generation import ConceptPlan, GenerationOptions, SegmentDraft
+from app.domain.generation import (
+    ConceptPlan,
+    GenerationOptions,
+    SegmentDraft,
+    SvgCritique,
+)
 from app.providers.base import LLMProvider
 from app.providers.mock import MockLLMProvider, MockTTSProvider
 from app.repositories.memory import InMemoryAssetRepository
@@ -51,6 +56,26 @@ class _AlwaysBadLLM(_BadThenGoodLLM):
         return svg, segments  # never fixes it
 
 
+class _LowQualitySvgLLM(MockLLMProvider):
+    """Critique scores low until it has been refined `good_after` times."""
+
+    def __init__(self, settings, good_after: int = 1) -> None:
+        super().__init__(settings)
+        self.good_after = good_after
+        self.critiques = 0
+        self.refines = 0
+
+    async def critique_svg(self, topic, plan, svg):
+        self.critiques += 1
+        if self.refines >= self.good_after:
+            return SvgCritique(score=9, issues=[])
+        return SvgCritique(score=3, issues=["text overlaps the box"])
+
+    async def refine_svg(self, topic, plan, svg, critique):
+        self.refines += 1
+        return svg
+
+
 async def test_happy_path_produces_valid_lesson():
     settings = Settings()
     graph, assets = _graph(MockLLMProvider(settings), settings)
@@ -87,6 +112,32 @@ async def test_exhausted_retries_fail_the_gate():
         await graph.generate("Topic", "topic|en", GenerationOptions())
 
     assert llm.repair_calls == settings.max_repair_retries
+
+
+async def test_svg_critique_loop_refines_then_accepts():
+    settings = Settings()  # svg_refine_iterations=1, threshold=8
+    llm = _LowQualitySvgLLM(settings, good_after=1)
+    graph, _ = _graph(llm, settings)
+
+    lesson = await graph.generate("Topic", "topic|en", GenerationOptions())
+
+    assert llm.refines == 1, "a low-scoring SVG should be refined once"
+    assert llm.critiques == 2, "critique runs before and after the refine"
+    drafts = [SegmentDraft(text=s.text, svg_element_ids=s.svg_element_ids) for s in lesson.segments]
+    assert validate(lesson.svg, drafts).ok
+
+
+async def test_svg_critique_loop_is_bounded():
+    settings = Settings(svg_refine_iterations=2)
+    llm = _LowQualitySvgLLM(settings, good_after=99)  # never satisfied
+    graph, _ = _graph(llm, settings)
+
+    lesson = await graph.generate("Topic", "topic|en", GenerationOptions())
+
+    assert llm.refines == 2, "refinement is capped at svg_refine_iterations"
+    # Still produces a valid lesson — it proceeds with the best-effort SVG.
+    drafts = [SegmentDraft(text=s.text, svg_element_ids=s.svg_element_ids) for s in lesson.segments]
+    assert validate(lesson.svg, drafts).ok
 
 
 async def test_progress_reaches_100():

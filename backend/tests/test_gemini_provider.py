@@ -9,7 +9,7 @@ import pytest
 
 from app.core.config import Settings
 from app.core.errors import GenerationFailedError, ProviderUnavailableError
-from app.domain.generation import ConceptPlan, SegmentDraft
+from app.domain.generation import ConceptPlan, SegmentDraft, SvgCritique
 from app.providers.gemini import (
     GeminiLLMProvider,
     GeminiTTSProvider,
@@ -90,6 +90,33 @@ async def test_repair_extracts_svg_and_segments():
         "<bad>", [SegmentDraft(text="x", svg_element_ids=["ghost"])], ["bad id"]
     )
     assert svg.startswith("<svg") and segs[0].svg_element_ids == ["a"]
+
+
+async def test_critique_svg_returns_score_and_issues():
+    client, _ = _client(_Resp(parsed=SvgCritique(score=4, issues=["overlap"])))
+    crit = await GeminiLLMProvider(Settings(), client=client).critique_svg(
+        "Topic", ConceptPlan(title="T", concepts=["x"]), SVG
+    )
+    assert crit.score == 4 and crit.issues == ["overlap"]
+    assert not crit.acceptable(8)
+
+
+async def test_refine_svg_extracts_svg():
+    client, _ = _client(_Resp(text=f"```svg\n{SVG}\n```"))
+    out = await GeminiLLMProvider(Settings(), client=client).refine_svg(
+        "Topic", ConceptPlan(title="T", concepts=["x"]), "<bad>",
+        SvgCritique(score=2, issues=["overlap"]),
+    )
+    assert out.startswith("<svg") and out.endswith("</svg>")
+
+
+async def test_svg_work_uses_svg_model_override():
+    client, models = _client(_Resp(text=f"```svg\n{SVG}\n```"))
+    settings = Settings(gemini_svg_model="gemini-2.5-pro")
+    await GeminiLLMProvider(settings, client=client).generate_svg(
+        "Topic", ConceptPlan(title="T", concepts=["x"])
+    )
+    assert models.calls[0]["model"] == "gemini-2.5-pro"
 
 
 async def test_transport_error_maps_to_provider_unavailable():

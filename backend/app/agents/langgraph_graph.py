@@ -53,6 +53,8 @@ class LangGraphGenerationGraph(GenerationGraph):
         b = StateGraph(GenerationState)
         b.add_node("planner", self._planner)
         b.add_node("svg", self._svg)
+        b.add_node("critique", self._critique)
+        b.add_node("refine", self._refine)
         b.add_node("narration", self._narration)
         b.add_node("validate", self._validate)
         b.add_node("repair", self._repair)
@@ -62,7 +64,14 @@ class LangGraphGenerationGraph(GenerationGraph):
 
         b.add_edge(START, "planner")
         b.add_edge("planner", "svg")
-        b.add_edge("svg", "narration")
+        # SVG quality loop: svg -> critique -> (refine -> critique)* -> narration
+        b.add_edge("svg", "critique")
+        b.add_conditional_edges(
+            "critique",
+            self._route_after_critique,
+            {"refine": "refine", "narration": "narration"},
+        )
+        b.add_edge("refine", "critique")
         b.add_edge("narration", "validate")
         b.add_conditional_edges(
             "validate",
@@ -84,7 +93,30 @@ class LangGraphGenerationGraph(GenerationGraph):
     async def _svg(self, state: GenerationState, config: RunnableConfig | None = None) -> dict:
         await _report(config, "svg", 35)
         svg = await self._llm.generate_svg(state["topic"], state["plan"])
-        return {"svg": svg}
+        return {"svg": svg, "svg_refines": 0}
+
+    async def _critique(self, state: GenerationState, config: RunnableConfig | None = None) -> dict:
+        await _report(config, "critiquing", 45)
+        critique = await self._llm.critique_svg(state["topic"], state["plan"], state["svg"])
+        return {"critique": critique}
+
+    def _route_after_critique(self, state: GenerationState) -> str:
+        critique = state["critique"]
+        if critique.acceptable(self._settings.svg_quality_threshold):
+            return "narration"
+        if state.get("svg_refines", 0) < self._settings.svg_refine_iterations:
+            return "refine"
+        return "narration"  # out of budget: proceed with the best SVG so far
+
+    async def _refine(self, state: GenerationState, config: RunnableConfig | None = None) -> dict:
+        refines = state.get("svg_refines", 0) + 1
+        await _report(config, "refining_svg", 48)
+        log.info("svg refine pass %d (score %d) for %s",
+                 refines, state["critique"].score, state["topic_key"])
+        svg = await self._llm.refine_svg(
+            state["topic"], state["plan"], state["svg"], state["critique"]
+        )
+        return {"svg": svg, "svg_refines": refines}
 
     async def _narration(self, state: GenerationState, config: RunnableConfig | None = None) -> dict:
         await _report(config, "narration", 55)

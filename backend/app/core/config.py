@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # safe GA default; gemini-3.1-flash is the newer option.
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"                    # text + structured output
+    # Optional higher-quality model for the visual-reasoning-heavy SVG work
+    # (generate / critique / refine). Empty => reuse gemini_model. A "pro" tier
+    # here noticeably improves diagram quality; e.g. "gemini-2.5-pro".
+    gemini_svg_model: str = ""
     gemini_tts_model: str = "gemini-3.1-flash-tts-preview"    # text-to-speech
     gemini_voice: str = "Kore"                         # prebuilt voice name
     gemini_tts_sample_rate: int = 24000                # PCM sample rate from TTS
@@ -39,6 +43,12 @@ class Settings(BaseSettings):
     # --- Generation tuning ---
     max_repair_retries: int = 2
     tts_ms_per_word: int = 400  # mock TTS duration heuristic (ms per word)
+
+    # --- SVG quality (agentic critique -> refine loop) ---
+    # After the SVG is drawn, a critique model scores it and lists issues; while
+    # the score is below the threshold (and budget remains), it is refined.
+    svg_refine_iterations: int = 1   # max critique->refine passes (0 disables the loop)
+    svg_quality_threshold: int = 8   # accept the SVG when the critique score >= this
 
     # --- Persistence ---
     storage_backend: str = "memory"  # memory | filesystem

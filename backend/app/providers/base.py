@@ -7,7 +7,7 @@ lives inside each adapter, so the agent graph only orchestrates calls + validati
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from app.domain.generation import ConceptPlan, SegmentDraft
+from app.domain.generation import ConceptPlan, SegmentDraft, SvgCritique
 
 
 @dataclass(frozen=True)
@@ -40,6 +40,22 @@ class LLMProvider(ABC):
     ) -> tuple[str, list[SegmentDraft]]:
         """Given validation errors, return corrected (svg, segments)."""
         ...
+
+    # --- SVG quality (agentic critique -> refine loop) ---
+    # Concrete no-op defaults so a provider opts in only when it has a critique
+    # model. Providers that support it (Gemini) override both.
+
+    async def critique_svg(
+        self, topic: str, plan: ConceptPlan, svg: str
+    ) -> SvgCritique:
+        """Review an SVG's visual quality. Default: accept as-is (no loop)."""
+        return SvgCritique(score=10, issues=[])
+
+    async def refine_svg(
+        self, topic: str, plan: ConceptPlan, svg: str, critique: SvgCritique
+    ) -> str:
+        """Return an improved SVG addressing the critique. Default: unchanged."""
+        return svg
 
 
 class TTSProvider(ABC):

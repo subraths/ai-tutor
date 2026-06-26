@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from app.core.audio import pcm_duration_ms, pcm_to_wav
 from app.core.config import Settings
 from app.core.errors import GenerationFailedError, ProviderUnavailableError
-from app.domain.generation import ConceptPlan, SegmentDraft
+from app.domain.generation import ConceptPlan, SegmentDraft, SvgCritique
 from app.providers import prompts
 from app.providers.base import AudioClip, LLMProvider, TTSProvider
 
@@ -90,16 +90,20 @@ class GeminiLLMProvider(LLMProvider):
     def __init__(self, settings: Settings, client: genai.Client | None = None) -> None:
         self._settings = settings
         self._model = settings.gemini_model
+        # A (optionally higher-quality) model dedicated to the SVG work.
+        self._svg_model = settings.gemini_svg_model or settings.gemini_model
         if client is None:
             _require_key(settings)
             client = genai.Client(api_key=settings.gemini_api_key)
         self._client = client
 
-    async def _generate_json(self, prompt: str, schema: type[BaseModel]) -> BaseModel:
+    async def _generate_json(
+        self, prompt: str, schema: type[BaseModel], model: str | None = None
+    ) -> BaseModel:
         resp = await _generate_with_retry(
             self._client,
             self._settings,
-            model=self._model,
+            model=model or self._model,
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -119,9 +123,9 @@ class GeminiLLMProvider(LLMProvider):
         except (json.JSONDecodeError, ValueError) as exc:
             raise GenerationFailedError(f"Gemini returned invalid JSON: {exc}") from exc
 
-    async def _generate_text(self, prompt: str) -> str:
+    async def _generate_text(self, prompt: str, model: str | None = None) -> str:
         resp = await _generate_with_retry(
-            self._client, self._settings, model=self._model, contents=prompt
+            self._client, self._settings, model=model or self._model, contents=prompt
         )
         return getattr(resp, "text", "") or ""
 
@@ -132,7 +136,23 @@ class GeminiLLMProvider(LLMProvider):
         return result  # type: ignore[return-value]
 
     async def generate_svg(self, topic: str, plan: ConceptPlan) -> str:
-        text = await self._generate_text(prompts.svg_prompt(topic, plan))
+        text = await self._generate_text(prompts.svg_prompt(topic, plan), model=self._svg_model)
+        return _extract_svg(text)
+
+    async def critique_svg(
+        self, topic: str, plan: ConceptPlan, svg: str
+    ) -> SvgCritique:
+        result = await self._generate_json(
+            prompts.critique_prompt(topic, plan, svg), SvgCritique, model=self._svg_model
+        )
+        return result  # type: ignore[return-value]
+
+    async def refine_svg(
+        self, topic: str, plan: ConceptPlan, svg: str, critique: SvgCritique
+    ) -> str:
+        text = await self._generate_text(
+            prompts.refine_prompt(topic, plan, svg, critique), model=self._svg_model
+        )
         return _extract_svg(text)
 
     async def generate_narration(

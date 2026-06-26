@@ -52,6 +52,19 @@ class MockGenerationGraph(GenerationGraph):
         await _report(progress, "svg", 35)
         svg = await self._llm.generate_svg(topic, plan)
 
+        # 2b. critique -> refine loop (bounded) to raise SVG quality
+        await _report(progress, "critiquing", 45)
+        critique = await self._llm.critique_svg(topic, plan, svg)
+        refines = 0
+        while (
+            not critique.acceptable(self._settings.svg_quality_threshold)
+            and refines < self._settings.svg_refine_iterations
+        ):
+            refines += 1
+            await _report(progress, "refining_svg", 48)
+            svg = await self._llm.refine_svg(topic, plan, svg, critique)
+            critique = await self._llm.critique_svg(topic, plan, svg)
+
         # 3. narration
         await _report(progress, "narration", 55)
         drafts = await self._llm.generate_narration(topic, plan, svg)
