@@ -21,8 +21,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -49,8 +47,9 @@ import com.tutorai.app.ui.theme.LocalSpacing
 fun HistoryScreen(
     viewModel: HistoryViewModel,
     onOpen: (String) -> Unit,
-    onBack: () -> Unit,
+    onCreateLesson: () -> Unit,
     modifier: Modifier = Modifier,
+    bottomBar: @Composable () -> Unit = {},
 ) {
     val lessons by viewModel.items.collectAsState()
     val spacing = LocalSpacing.current
@@ -58,18 +57,10 @@ fun HistoryScreen(
     Scaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(TutorIcons.Back, contentDescription = "Back") }
-                },
-                title = {},
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-            )
-        },
+        bottomBar = bottomBar,
     ) { inner ->
         if (lessons.isEmpty()) {
-            EmptyLibrary(onCreateLesson = onBack, modifier = Modifier.padding(inner))
+            EmptyLibrary(onCreateLesson = onCreateLesson, modifier = Modifier.padding(inner))
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(inner),

@@ -1,5 +1,9 @@
 package com.tutorai.app.ui.player
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
@@ -19,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -56,6 +61,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
@@ -72,8 +80,10 @@ import kotlinx.coroutines.delay
  * subtitle-style captions, a segment scrubber, and a large play control.
  *
  * Adaptive: portrait stacks (diagram → scrubber → transport); landscape splits
- * into diagram | controls. The previous forced-landscape lock is gone — the
- * activity's `configChanges` keeps playback alive across rotation.
+ * into diagram | controls. The diagram has two overlay controls (top-right):
+ *   • caption toggle — captions are OFF by default; tap to show/hide subtitles.
+ *   • fullscreen toggle — locks to landscape and hides every chrome (top bar,
+ *     scrubber, transport) for a distraction-free, full-bleed diagram.
  */
 @Composable
 fun PlayerScreen(viewModel: PlayerViewModel, onBack: () -> Unit) {
@@ -105,6 +115,11 @@ private fun PlayerContent(
     var currentIndex by remember { mutableIntStateOf(0) }
     var isPlaying by remember { mutableStateOf(false) }
     var positionMs by remember { mutableLongStateOf(0L) }
+    var captionsVisible by remember { mutableStateOf(false) }   // captions OFF by default
+    var fullscreen by remember { mutableStateOf(false) }
+
+    // Lock to landscape + hide system bars while in fullscreen; restore on exit.
+    FullscreenEffect(active = fullscreen)
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -156,6 +171,8 @@ private fun PlayerContent(
         isPlaying = isPlaying,
         segmentProgress = segmentProgress,
         savedOffline = savedOffline,
+        captionsVisible = captionsVisible,
+        fullscreen = fullscreen,
         segmentLabel = "Segment ${index + 1}",
         elapsedLabel = formatTime(elapsedMs),
         totalLabel = if (totalMs > 0) formatTime(totalMs) else "",
@@ -166,6 +183,8 @@ private fun PlayerContent(
         onReplay = { exoPlayer.seekTo(0, 0); exoPlayer.play() },
         onSeek = { i -> exoPlayer.seekTo(i, 0) },
         onSaveOffline = onSaveOffline,
+        onToggleCaptions = { captionsVisible = !captionsVisible },
+        onToggleFullscreen = { fullscreen = !fullscreen },
     )
 }
 
@@ -181,6 +200,8 @@ private fun PlayerBody(
     isPlaying: Boolean,
     segmentProgress: Float,
     savedOffline: Boolean,
+    captionsVisible: Boolean,
+    fullscreen: Boolean,
     segmentLabel: String,
     elapsedLabel: String,
     totalLabel: String,
@@ -191,7 +212,26 @@ private fun PlayerBody(
     onReplay: () -> Unit,
     onSeek: (Int) -> Unit,
     onSaveOffline: () -> Unit,
+    onToggleCaptions: () -> Unit,
+    onToggleFullscreen: () -> Unit,
 ) {
+    // Fullscreen: diagram only, every other control hidden.
+    if (fullscreen) {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            DiagramHero(
+                svg = svg,
+                caption = caption,
+                highlightIds = highlightIds,
+                captionsVisible = captionsVisible,
+                fullscreen = true,
+                onToggleCaptions = onToggleCaptions,
+                onToggleFullscreen = onToggleFullscreen,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        return
+    }
+
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     Scaffold(
@@ -233,6 +273,10 @@ private fun PlayerBody(
                     svg = svg,
                     caption = caption,
                     highlightIds = highlightIds,
+                    captionsVisible = captionsVisible,
+                    fullscreen = false,
+                    onToggleCaptions = onToggleCaptions,
+                    onToggleFullscreen = onToggleFullscreen,
                     modifier = Modifier.weight(1.5f).fillMaxHeight().padding(start = 14.dp, bottom = 14.dp),
                 )
                 Column(
@@ -250,6 +294,10 @@ private fun PlayerBody(
                     svg = svg,
                     caption = caption,
                     highlightIds = highlightIds,
+                    captionsVisible = captionsVisible,
+                    fullscreen = false,
+                    onToggleCaptions = onToggleCaptions,
+                    onToggleFullscreen = onToggleFullscreen,
                     modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 14.dp),
                 )
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
@@ -280,12 +328,16 @@ private fun SegmentCounter(current: Int, total: Int) {
     }
 }
 
-/** Diagram surface (WebView) + caption subtitle overlay. */
+/** Diagram surface (WebView) + overlay controls + optional caption subtitle. */
 @Composable
 private fun DiagramHero(
     svg: String,
     caption: String,
     highlightIds: List<String>,
+    captionsVisible: Boolean,
+    fullscreen: Boolean,
+    onToggleCaptions: () -> Unit,
+    onToggleFullscreen: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier) {
@@ -294,32 +346,73 @@ private fun DiagramHero(
             highlightIds = highlightIds,
             modifier = Modifier.fillMaxSize(),
         )
-        // caption scrim + cross-fading subtitle
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .clip(ScholarShapeTokens.DiagramSurface)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.55f),
-                    ),
-                )
-                .padding(horizontal = 18.dp, vertical = 18.dp),
-            contentAlignment = Alignment.BottomCenter,
-        ) {
-            Crossfade(targetState = caption, label = "caption") { text ->
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .semantics { contentDescription = "Caption: $text" },
-                )
+
+        // Cross-fading subtitle — only when captions are enabled.
+        if (captionsVisible) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .clip(ScholarShapeTokens.DiagramSurface)
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color.Transparent,
+                            1f to Color.Black.copy(alpha = 0.55f),
+                        ),
+                    )
+                    .padding(horizontal = 18.dp, vertical = 18.dp),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Crossfade(targetState = caption, label = "caption") { text ->
+                    Text(
+                        text = text,
+                        style = MaterialTheme.typography.titleLarge,
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics { contentDescription = "Caption: $text" },
+                    )
+                }
             }
+        }
+
+        // Top-right overlay: caption toggle + fullscreen toggle.
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .safeDrawingPadding()
+                .padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            DiagramOverlayButton(
+                icon = if (captionsVisible) TutorIcons.Caption else TutorIcons.CaptionOff,
+                desc = if (captionsVisible) "Hide captions" else "Show captions",
+                onClick = onToggleCaptions,
+            )
+            DiagramOverlayButton(
+                icon = if (fullscreen) TutorIcons.FullscreenExit else TutorIcons.Fullscreen,
+                desc = if (fullscreen) "Exit fullscreen" else "Fullscreen",
+                onClick = onToggleFullscreen,
+            )
+        }
+    }
+}
+
+/** Small circular scrim button, legible over any diagram. */
+@Composable
+private fun DiagramOverlayButton(icon: ImageVector, desc: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = Color.Black.copy(alpha = 0.36f),
+        contentColor = Color.White,
+        modifier = Modifier
+            .size(40.dp)
+            .semantics { contentDescription = desc },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
         }
     }
 }
@@ -479,6 +572,40 @@ private fun CenteredStatus(
             )
         }
     }
+}
+
+/**
+ * While [active], lock the activity to landscape and hide the system bars for an
+ * immersive diagram. Restores the previous orientation and bars when fullscreen
+ * is dismissed or the player leaves composition. The activity's `configChanges`
+ * means the rotation doesn't recreate it, so playback continues uninterrupted.
+ */
+@Composable
+private fun FullscreenEffect(active: Boolean) {
+    val context = LocalContext.current
+    DisposableEffect(active) {
+        val activity = context.findActivity()
+        val window = activity?.window
+        if (active && activity != null && window != null) {
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            val controller = WindowCompat.getInsetsController(window, window.decorView)
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            if (active && activity != null && window != null) {
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                WindowCompat.getInsetsController(window, window.decorView)
+                    .show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 private fun formatTime(ms: Long): String {

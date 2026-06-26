@@ -30,7 +30,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -80,10 +79,10 @@ private val GenerationStages = listOf(
 fun TopicScreen(
     viewModel: TopicViewModel,
     onPlayLesson: (String) -> Unit,
-    onShowHistory: () -> Unit,
     modifier: Modifier = Modifier,
     suggestions: List<String> = listOf("Photosynthesis", "The water cycle", "Pythagoras", "Black holes"),
     reducedMotion: Boolean = false,
+    bottomBar: @Composable () -> Unit = {},
 ) {
     val topic by viewModel.topic.collectAsState()
     val state by viewModel.uiState.collectAsState()
@@ -100,11 +99,6 @@ fun TopicScreen(
         topBar = {
             LargeTopAppBar(
                 title = { Text("TutorAI", style = MaterialTheme.typography.displaySmall) },
-                actions = {
-                    IconButton(onClick = onShowHistory) {
-                        Icon(TutorIcons.History, contentDescription = "History")
-                    }
-                },
                 colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -112,6 +106,7 @@ fun TopicScreen(
                 scrollBehavior = scrollBehavior,
             )
         },
+        bottomBar = bottomBar,
     ) { inner ->
         AnimatedContent(
             targetState = state,

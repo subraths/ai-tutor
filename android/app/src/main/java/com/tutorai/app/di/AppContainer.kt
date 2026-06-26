@@ -6,6 +6,7 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import com.tutorai.app.data.local.LessonFileStore
 import com.tutorai.app.data.local.TutorDatabase
 import com.tutorai.app.data.remote.TutorApi
+import com.tutorai.app.data.settings.ThemePreferences
 import com.tutorai.app.data.repository.LessonRepositoryImpl
 import com.tutorai.app.data.repository.LibraryRepositoryImpl
 import com.tutorai.app.domain.repository.LessonRepository
@@ -54,4 +55,6 @@ class AppContainer(context: Context, baseUrl: String) {
 
     val generateLessonUseCase = GenerateLessonUseCase(lessonRepository)
     val saveLessonUseCase = SaveLessonUseCase(libraryRepository)
+
+    val themePreferences = ThemePreferences(context)
 }
