@@ -231,12 +231,12 @@ private fun buildSvgHtml(svg: String, glowHex: String): String {
     var box = unionBox(els);
     if (!box) { animateVB(ORIG, 500); return; }
 
-    // breathing room around the section
-    var px = box[2] * 0.14, py = box[3] * 0.14;
+    // breathing room around the section (higher padding => a gentler zoom)
+    var px = box[2] * 0.28, py = box[3] * 0.28;
     box = [box[0] - px, box[1] - py, box[2] + 2 * px, box[3] + 2 * py];
 
     // don't over-zoom on a tiny target
-    var minW = ORIG[2] * 0.25, minH = ORIG[3] * 0.25;
+    var minW = ORIG[2] * 0.38, minH = ORIG[3] * 0.38;
     if (box[2] < minW) { box[0] -= (minW - box[2]) / 2; box[2] = minW; }
     if (box[3] < minH) { box[1] -= (minH - box[3]) / 2; box[3] = minH; }
 
