@@ -114,24 +114,37 @@ private fun colorHex(argb: Int): String = String.format("#%06X", 0xFFFFFF and ar
  * Wrap raw SVG markup in a self-contained HTML page exposing `highlight(ids)` /
  * `clearHighlight()`, plus a viewBox-driven "zoom to the highlighted section".
  *
- * The SVG is given a definite full-size box (a 100%-height html/body/frame chain)
- * and `preserveAspectRatio="xMidYMid meet"`, so the content — and every zoomed
- * section — stays centred in the WebView both horizontally and vertically.
- * `ensureInit()` guarantees a viewBox even if the source SVG omits one, so the
- * WebView never has to derive an intrinsic height (which Android WebView won't).
+ * Android WebView gives an inline `<svg>` NO intrinsic height, so a `height:100%`
+ * chain collapses to zero and the diagram never paints. We instead reserve a
+ * DEFINITE height from the definite width via the viewBox aspect ratio (the
+ * padding-bottom trick) so it always renders, and flex-centre that box in the
+ * viewport. `preserveAspectRatio="xMidYMid meet"` keeps the content — and every
+ * zoomed section — centred. `ensureInit()` guarantees a viewBox even if the
+ * source SVG omits one.
  *
  * @param glowHex the theme amber so the highlight glow matches light/dark.
  */
 private fun buildSvgHtml(svg: String, glowHex: String): String {
+    // Reserve the SVG's height from its width using the viewBox aspect ratio.
+    val ratioPct = Regex(
+        """viewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([-\d.]+)\s+([-\d.]+)""",
+    ).find(svg)?.let { m ->
+        val w = m.groupValues[1].toFloatOrNull()
+        val h = m.groupValues[2].toFloatOrNull()
+        if (w != null && h != null && w > 0f) (h / w * 100f) else null
+    } ?: 60f // sensible default (≈1000x600) when no viewBox is present
+
     return """
 <!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: transparent; }
-  #frame { width: 100%; height: 100%; }
-  #frame svg { display: block; width: 100%; height: 100%; }
+  html { height: 100%; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { min-height: 100%; display: flex; align-items: center; justify-content: center; }
+  #frame { position: relative; width: 100%; height: 0; padding-bottom: ${ratioPct}%; }
+  #frame svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
   .tutor-hl {
     filter: drop-shadow(0 0 5px $glowHex) drop-shadow(0 0 12px $glowHex);
     transform: scale(1.04);
