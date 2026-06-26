@@ -28,11 +28,36 @@ Concepts to depict, in order:
 
 Hard requirements:
 - Output ONLY the SVG markup (starting with <svg ...> and ending with </svg>).
-- Include a viewBox. Do NOT include <script> or external references.
+- Include a viewBox sized generously to the content (e.g. "0 0 1600 900", a
+  ~16:9 canvas) and keep a clear margin of at least 40 units inside all edges.
+- Do NOT include <script> or external references (no external images or fonts).
 - Give EVERY meaningful visual element a stable, semantic id in lower-kebab-case
   (e.g. id="sun", id="leaf", id="arrow-1"). These ids will be referenced by the
   narration, so they must be descriptive and stable.
-- Keep it clean and legible; label important parts with <text> elements."""
+
+Layout rules (CRITICAL — the diagram must be uncluttered; NOTHING may overlap that
+is not meant to):
+- Give each concept its OWN rectangular region. Regions must not overlap; leave a
+  gap of at least 40 units between neighbouring regions.
+- Arrange regions in a clean reading order — left-to-right (wrap to a new row when
+  needed) or top-to-bottom — with consistent spacing.
+- TEXT must never overlap other text, and must not sit on top of another element's
+  content:
+  * Put each label INSIDE its own box (centered, with padding) or directly
+    above/below it — never across a neighbouring element.
+  * Keep labels short. If a label is long, lower its font-size or split it over
+    several lines with <tspan> (using dy) so it fits within its region's width.
+  * Estimate text width as ~0.6 * font-size * (number of characters), and choose
+    font-size and x/y so each text box stays fully inside its region and clear of
+    every other text and shape. Leave >= 8 units between separate lines/labels.
+- Step/section titles go ABOVE their region with clear spacing; a title must not
+  overlap any box, arrow, or other title.
+- Route connectors (arrows/lines) through the empty gaps BETWEEN regions, not over
+  labels or boxes. Define arrowheads with a <marker> in <defs> if useful.
+- Every element must lie fully INSIDE the viewBox — nothing clipped or spilling out.
+- Prefer whitespace over density: a larger canvas with room to breathe is better
+  than cramming elements together.
+- Use legible colours with good contrast on a light/neutral background."""
 
 _NARRATION = """Write the spoken narration for this lesson as an ordered list of
 short segments.
@@ -58,8 +83,14 @@ Current SVG:
 Current segments (JSON):
 {segments}
 
-Return the corrected SVG and the corrected segments. Ensure the SVG is well-formed
-with a viewBox, and that every id referenced by a segment exists in the SVG."""
+Return the corrected SVG and the corrected segments. Requirements:
+- The SVG must be well-formed and include a viewBox, and every id referenced by a
+  segment must exist in the SVG (preserve existing ids wherever possible).
+- Also clean up the LAYOUT so the diagram is readable: no overlapping text, no text
+  sitting on top of another element, no shapes overlapping that should not, and
+  nothing spilling outside the viewBox. Keep clear gaps between regions and put each
+  label inside or directly beside its own element. Enlarge the viewBox or reposition
+  elements as needed, but keep the ids and the meaning intact."""
 
 
 def plan_prompt(topic: str, language: str) -> str:
