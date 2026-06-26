@@ -114,37 +114,25 @@ private fun colorHex(argb: Int): String = String.format("#%06X", 0xFFFFFF and ar
  * Wrap raw SVG markup in a self-contained HTML page exposing `highlight(ids)` /
  * `clearHighlight()`, plus a viewBox-driven "zoom to the highlighted section".
  *
- * Android WebView gives an inline `<svg>` NO intrinsic height, so a `height:100%`
- * chain collapses to zero and the diagram never paints. We instead reserve a
- * DEFINITE height from the definite width via the viewBox aspect ratio (the
- * padding-bottom trick) so it always renders, and flex-centre that box in the
- * viewport. `preserveAspectRatio="xMidYMid meet"` keeps the content — and every
- * zoomed section — centred. `ensureInit()` guarantees a viewBox even if the
- * source SVG omits one.
+ * The SVG element is sized in JS to the WebView's ACTUAL pixel width/height
+ * (`window.innerWidth/innerHeight`) — so it adapts to each device and orientation
+ * rather than to a fixed aspect ratio — and uses `preserveAspectRatio="xMidYMid
+ * meet"`, so the WHOLE diagram always fits inside that box: it fills nicely in
+ * landscape and fits (zoomed out) in portrait, never clipped. Explicit pixel
+ * dimensions are used because Android WebView gives an inline <svg> no intrinsic
+ * height (a height:100% chain collapses to zero). Re-measured on resize/rotation.
  *
  * @param glowHex the theme amber so the highlight glow matches light/dark.
  */
 private fun buildSvgHtml(svg: String, glowHex: String): String {
-    // Reserve the SVG's height from its width using the viewBox aspect ratio.
-    val ratioPct = Regex(
-        """viewBox\s*=\s*["']\s*[-\d.]+\s+[-\d.]+\s+([-\d.]+)\s+([-\d.]+)""",
-    ).find(svg)?.let { m ->
-        val w = m.groupValues[1].toFloatOrNull()
-        val h = m.groupValues[2].toFloatOrNull()
-        if (w != null && h != null && w > 0f) (h / w * 100f) else null
-    } ?: 60f // sensible default (≈1000x600) when no viewBox is present
-
     return """
 <!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <style>
-  html { height: 100%; }
   html, body { margin: 0; padding: 0; background: transparent; }
-  body { min-height: 100%; display: flex; align-items: center; justify-content: center; }
-  #frame { position: relative; width: 100%; height: 0; padding-bottom: ${ratioPct}%; }
-  #frame svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  #frame svg { display: block; }   /* width/height set in JS to the WebView size */
   .tutor-hl {
     filter: drop-shadow(0 0 5px $glowHex) drop-shadow(0 0 12px $glowHex);
     transform: scale(1.04);
@@ -157,7 +145,7 @@ private fun buildSvgHtml(svg: String, glowHex: String): String {
 <body>
 <div id="frame">$svg</div>
 <script>
-  var svgEl = null, ORIG = null, animId = null;
+  var svgEl = null, ORIG = null, animId = null, lastIds = [];
 
   function getSvg() {
     if (!svgEl) svgEl = document.querySelector('#frame svg');
@@ -170,17 +158,30 @@ private fun buildSvgHtml(svg: String, glowHex: String): String {
     return (p.length === 4 && p[2] > 0 && p[3] > 0) ? p : null;
   }
 
-  // Capture the diagram's full extent once, and make sure it has a viewBox we can animate.
+  // Size the SVG element to the WebView's real pixel box (per device/orientation).
+  // With preserveAspectRatio="xMidYMid meet" the whole diagram fits inside it.
+  function sizeToViewport() {
+    var s = getSvg(); if (!s) return;
+    var w = window.innerWidth || document.documentElement.clientWidth || 0;
+    var h = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (w > 0) s.setAttribute('width', w);
+    if (h > 0) s.setAttribute('height', h);
+  }
+
+  // Capture the diagram's full extent once (its viewBox), then size to the viewport.
   function ensureInit() {
     var s = getSvg();
-    if (!s || ORIG) return;
-    ORIG = parseVB(s.getAttribute('viewBox'));
+    if (!s) return;
     if (!ORIG) {
-      try { var b = s.getBBox(); if (b && b.width > 0 && b.height > 0) ORIG = [b.x, b.y, b.width, b.height]; } catch (e) {}
+      ORIG = parseVB(s.getAttribute('viewBox'));
+      if (!ORIG) {
+        try { var b = s.getBBox(); if (b && b.width > 0 && b.height > 0) ORIG = [b.x, b.y, b.width, b.height]; } catch (e) {}
+      }
+      if (!ORIG) ORIG = [0, 0, parseFloat(s.getAttribute('width')) || 1000, parseFloat(s.getAttribute('height')) || 600];
+      s.setAttribute('viewBox', ORIG.join(' '));
+      s.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     }
-    if (!ORIG) ORIG = [0, 0, parseFloat(s.getAttribute('width')) || 1000, parseFloat(s.getAttribute('height')) || 600];
-    s.setAttribute('viewBox', ORIG.join(' '));
-    s.setAttribute('preserveAspectRatio', 'xMidYMid meet'); // keeps the focused box centered
+    sizeToViewport();
   }
 
   // Union bounding box (in SVG user units) of the given elements, via screen CTM
@@ -252,13 +253,20 @@ private fun buildSvgHtml(svg: String, glowHex: String): String {
     document.querySelectorAll('.tutor-hl').forEach(function (e) { e.classList.remove('tutor-hl'); });
   }
   function highlight(ids) {
+    lastIds = ids || [];
     clearHighlight();
-    (ids || []).forEach(function (id) {
+    lastIds.forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.classList.add('tutor-hl');
     });
-    focusOn(ids || []);
+    focusOn(lastIds);
   }
+
+  // Re-measure and re-fit when the WebView resizes (e.g. portrait <-> landscape).
+  function relayout() { ensureInit(); focusOn(lastIds); }
+  window.addEventListener('resize', relayout);
+  window.addEventListener('orientationchange', relayout);
+  window.addEventListener('load', relayout);
 
   ensureInit();
 </script>
