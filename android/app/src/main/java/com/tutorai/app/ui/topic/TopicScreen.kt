@@ -31,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.LargeTopAppBar
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tutorai.app.domain.model.Lesson
 import com.tutorai.app.ui.components.DiagramThumbnail
@@ -80,6 +82,7 @@ private val GenerationStages = listOf(
 fun TopicScreen(
     viewModel: TopicViewModel,
     onPlayLesson: (String) -> Unit,
+    onOpenSaved: (String) -> Unit,
     modifier: Modifier = Modifier,
     suggestions: List<String> = listOf("Photosynthesis", "The water cycle", "Pythagoras", "Black holes"),
     reducedMotion: Boolean = false,
@@ -88,9 +91,12 @@ fun TopicScreen(
     val topic by viewModel.topic.collectAsState()
     val state by viewModel.uiState.collectAsState()
     val saveState by viewModel.saveState.collectAsState()
+    val recentLessons by viewModel.recentLessons.collectAsState()
 
     val spacing = LocalSpacing.current
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(rememberTopAppBarState())
+    // A back affordance once a lesson is generated (or errored): return to search.
+    val showBack = state is TopicUiState.Success || state is TopicUiState.Error
 
     Scaffold(
         modifier = modifier
@@ -100,6 +106,13 @@ fun TopicScreen(
         topBar = {
             LargeTopAppBar(
                 title = { Text("TutorAI", style = MaterialTheme.typography.displaySmall) },
+                navigationIcon = {
+                    if (showBack) {
+                        IconButton(onClick = viewModel::reset) {
+                            Icon(TutorIcons.Back, contentDescription = "Back to search")
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.largeTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     scrolledContainerColor = MaterialTheme.colorScheme.surfaceContainer,
@@ -136,6 +149,8 @@ fun TopicScreen(
                             viewModel.generate()
                         },
                         suggestions = suggestions,
+                        recentLessons = recentLessons,
+                        onOpenLesson = onOpenSaved,
                     )
                     is TopicUiState.Generating -> GenerationProgress(
                         percent = s.progress,
@@ -180,6 +195,8 @@ private fun ColumnScope.IdleBody(
     onGenerate: () -> Unit,
     onPickSuggestion: (String) -> Unit,
     suggestions: List<String>,
+    recentLessons: List<Lesson>,
+    onOpenLesson: (String) -> Unit,
 ) {
     val spacing = LocalSpacing.current
     TutorAiMascot(
@@ -224,19 +241,82 @@ private fun ColumnScope.IdleBody(
         keyboardActions = KeyboardActions(onGo = { if (topic.isNotBlank()) onGenerate() }),
     )
 
-    SectionEyebrow(
-        text = "Try one of these",
-        modifier = Modifier
-            .align(Alignment.Start)
-            .padding(top = spacing.xl, bottom = spacing.m),
-    )
-    FlowRow(
+    if (recentLessons.isNotEmpty()) {
+        SectionEyebrow(
+            text = "Recent lessons",
+            modifier = Modifier
+                .align(Alignment.Start)
+                .padding(top = spacing.xl, bottom = spacing.m),
+        )
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(spacing.s),
+        ) {
+            recentLessons.forEach { lesson ->
+                RecentLessonRow(lesson = lesson, onClick = { onOpenLesson(lesson.id) })
+            }
+        }
+    }
+
+    // Suggestions only fill in until the learner has a few lessons of their own.
+    if (recentLessons.size < 3) {
+        SectionEyebrow(
+            text = "Try one of these",
+            modifier = Modifier
+                .align(Alignment.Start)
+                .padding(top = spacing.xl, bottom = spacing.m),
+        )
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(spacing.s),
+            verticalArrangement = Arrangement.spacedBy(spacing.s),
+        ) {
+            suggestions.forEach { s ->
+                SuggestionChip(label = s, onClick = { onPickSuggestion(s) })
+            }
+        }
+    }
+}
+
+/** Compact, tappable row for a recently generated (and auto-saved) lesson. */
+@Composable
+private fun RecentLessonRow(lesson: Lesson, onClick: () -> Unit) {
+    val spacing = LocalSpacing.current
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(spacing.s),
-        verticalArrangement = Arrangement.spacedBy(spacing.s),
     ) {
-        suggestions.forEach { s ->
-            SuggestionChip(label = s, onClick = { onPickSuggestion(s) })
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(spacing.s),
+        ) {
+            DiagramThumbnail(modifier = Modifier.size(52.dp))
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = spacing.m),
+            ) {
+                Text(
+                    lesson.title,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${lesson.segments.size} segments · ${lesson.totalDurationMs / 1000}s",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                TutorIcons.Play,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }

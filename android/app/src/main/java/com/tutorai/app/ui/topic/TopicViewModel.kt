@@ -6,16 +6,23 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.tutorai.app.domain.model.GenerationStatus
 import com.tutorai.app.domain.model.Lesson
+import com.tutorai.app.domain.repository.LibraryRepository
 import com.tutorai.app.domain.usecase.GenerateLessonUseCase
 import com.tutorai.app.domain.usecase.SaveLessonUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+private const val MAX_RECENT = 3
 
 class TopicViewModel(
     private val generateLesson: GenerateLessonUseCase,
     private val saveLesson: SaveLessonUseCase,
+    library: LibraryRepository,
 ) : ViewModel() {
 
     private val _topic = MutableStateFlow("")
@@ -26,6 +33,11 @@ class TopicViewModel(
 
     private val _saveState = MutableStateFlow<SaveState>(SaveState.Idle)
     val saveState: StateFlow<SaveState> = _saveState.asStateFlow()
+
+    /** The most recent auto-saved lessons (newest first, capped), for the home screen. */
+    val recentLessons: StateFlow<List<Lesson>> = library.history()
+        .map { it.take(MAX_RECENT) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun onTopicChange(value: String) {
         _topic.value = value
@@ -67,16 +79,19 @@ class TopicViewModel(
         }
     }
 
+    /** Return to the search/idle state (the "back" action on a generated lesson). */
     fun reset() {
         _uiState.value = TopicUiState.Idle
+        _saveState.value = SaveState.Idle
     }
 
     companion object {
         fun factory(
             generateUseCase: GenerateLessonUseCase,
             saveUseCase: SaveLessonUseCase,
+            library: LibraryRepository,
         ) = viewModelFactory {
-            initializer { TopicViewModel(generateUseCase, saveUseCase) }
+            initializer { TopicViewModel(generateUseCase, saveUseCase, library) }
         }
     }
 }

@@ -58,11 +58,13 @@ fun TutorNavHost(container: AppContainer) {
                 factory = TopicViewModel.factory(
                     container.generateLessonUseCase,
                     container.saveLessonUseCase,
+                    container.libraryRepository,
                 ),
             )
             TopicScreen(
                 viewModel = vm,
                 onPlayLesson = { id -> navController.navigate(Routes.player(id)) },
+                onOpenSaved = { id -> navController.navigate(Routes.libraryPlayer(id)) },
                 bottomBar = { TutorBottomBar(selected = TutorTab.Home, onSelect = onSelectTab) },
             )
         }
