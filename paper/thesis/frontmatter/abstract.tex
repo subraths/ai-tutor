@@ -1,0 +1,52 @@
+%================================ ABSTRACT ====================================
+\clearpage
+\thispagestyle{plain}
+\addcontentsline{toc}{chapter}{Abstract}
+\begin{center}
+{\Large\bfseries ABSTRACT\par}
+\end{center}
+\vspace{4mm}
+
+A learner who wants a quick visual answer to ``how does this work'' usually has
+to stitch together text from one source, a static picture from another, and a
+separate video from a third. This thesis presents \textbf{TutorAI}, a complete,
+working system that turns a single typed topic into a short lesson that
+explains itself. Each lesson consists of three tightly coupled parts: a vector
+diagram (SVG) whose meaningful parts carry stable, semantic identifiers; a
+narration script split into ordered segments, where every segment names the
+diagram parts it talks about; and one synthesized speech clip per segment with
+a precisely measured duration. On an Android device, playback highlights the
+referenced diagram parts while the matching audio plays, recreating the
+``point and explain'' behaviour of a human tutor. Once downloaded, a lesson
+replays fully offline and is kept in an on-device history.
+
+The central engineering challenge is reliability: a large language model will
+happily write narration that references a diagram part that does not exist,
+which silently breaks the highlighting. TutorAI solves this with an agentic
+generation pipeline built on LangGraph that separates planning, drawing,
+critique-and-refine of the drawing, narration, and validation into distinct
+nodes, and places a deterministic, non-LLM validator as a hard gate in front
+of the cache: a lesson is never stored unless its SVG is well formed and every
+referenced identifier really exists. Bounded refine and repair loops raise
+quality while capping cost and latency. The backend is a stateless FastAPI
+service with a shared, topic-keyed lesson cache, so a popular topic is
+generated once and then served instantly. Both the LLM (Gemini) and the
+text-to-speech engine sit behind swappable provider adapters, making model
+choice a configuration concern. The Android client follows Clean Architecture
+with MVVM, uses Room and a private file store for offline persistence, and
+drives segment-synchronized highlighting through a WebView-hosted SVG and
+ExoPlayer playlist.
+
+The realized system was verified end to end: live generation produced a valid,
+narrated, highlight-consistent lesson; the validation gate was shown to reject
+and repair broken lessons; a hermetic suite of 48 key-free backend tests runs
+in continuous integration; and the containerized backend and installable
+Android build are produced by automated pipelines. The thesis describes the
+methodology, architecture, implementation, and verified results, and discusses
+limitations and future work including formal learning-outcome studies.
+
+\vspace{6mm}
+\noindent\textbf{Keywords:} generative AI, large language models, LLM agents,
+intelligent tutoring systems, multimedia learning, SVG generation,
+text-to-speech, FastAPI, LangGraph, Android, offline-first, software
+architecture.

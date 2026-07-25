@@ -1,0 +1,144 @@
+%==============================================================================
+% TutorAI — M.Tech Thesis Report
+%
+% HOW TO COMPILE (any standard TeX Live / MiKTeX install, or Overleaf pdfLaTeX):
+%   pdflatex thesis.tex
+%   pdflatex thesis.tex     % run twice so the TOC / references resolve
+%
+% The bibliography is embedded (thebibliography) so no .bib / bibtex is needed.
+%
+% BEFORE YOU SUBMIT, search for  \todoph  and fill each placeholder:
+%   - your USN, the academic year, guide's designation
+%   - publication details (once the conference paper is accepted)
+%   - plagiarism-report similarity figure
+% Everything in the body describes the real system in this repository.
+%
+% Screenshots: same four PNGs as the conference paper. The file looks in
+% ./fig/ first and then ../fig/, so the copies used by tutorai.tex are found
+% automatically. Missing images render as labelled placeholder boxes and never
+% break the build.
+%==============================================================================
+\documentclass[12pt,a4paper,oneside]{report}
+
+% ------------------------------ packages -------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{mathptmx}                 % Times text + math (standard thesis font)
+\usepackage[a4paper,left=3.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm]{geometry}
+\usepackage{setspace}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta,fit,backgrounds,shapes.geometric}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\graphicspath{{fig/}{../fig/}}
+
+% ------------------------------ styling --------------------------------------
+\onehalfspacing
+\setlength{\parskip}{4pt}
+
+% Chapter headings: "CHAPTER 1" centred, then the title, both bold.
+\titleformat{\chapter}[display]
+  {\centering\bfseries\Large}
+  {\MakeUppercase{\chaptertitlename}~\thechapter}
+  {8pt}
+  {\MakeUppercase}
+\titlespacing*{\chapter}{0pt}{-10pt}{24pt}
+
+\titleformat{\section}{\bfseries\large}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\bfseries\normalsize}{\thesubsection}{0.8em}{}
+
+% ------------------------------ helpers --------------------------------------
+% Fill-me-in placeholder, easy to search for.
+\newcommand{\todoph}[1]{\textbf{[#1]}}
+
+% Screenshot helper: shows the image if present, else a labelled placeholder box
+% so the thesis always compiles.
+\newcommand{\shot}[2][width=\linewidth]{%
+  \IfFileExists{fig/#2}{\includegraphics[#1]{#2}}{%
+    \IfFileExists{../fig/#2}{\includegraphics[#1]{#2}}{%
+      \fbox{\parbox[c][45mm][c]{40mm}{\centering\small
+        add screenshot:\\\texttt{fig/#2}}}}}}
+
+% Listing style for JSON / code snippets.
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  columns=fullflexible,
+  showstringspaces=false,
+  frame=single,
+  framesep=4pt,
+  xleftmargin=4pt,
+  aboveskip=6pt,
+  belowskip=6pt
+}
+
+% ------------------------------ metadata -------------------------------------
+\newcommand{\thesistitle}{TutorAI: An Agentic, Validation-Gated Pipeline for
+Self-Explaining, Highlight-Synchronized Visual Lessons on an Offline-First
+Mobile Application}
+\newcommand{\candidatename}{Subrath S}
+\newcommand{\candidateusn}{\todoph{USN}}
+\newcommand{\guidename}{Prasad A M}
+\newcommand{\guidedesig}{\todoph{Designation, e.g.\ Assistant Professor}}
+\newcommand{\deptname}{Department of Computer Science and Engineering}
+\newcommand{\collegename}{Dayananda Sagar College of Engineering}
+\newcommand{\collegecity}{Bangalore}
+\newcommand{\university}{Visvesvaraya Technological University, Belagavi}
+\newcommand{\academicyear}{\todoph{2025--2026}}
+
+%==============================================================================
+\begin{document}
+
+% =============================== FRONT MATTER ================================
+\pagenumbering{roman}
+
+\input{frontmatter/titlepage}
+\input{frontmatter/certificate}
+\input{frontmatter/declaration}
+\input{frontmatter/abstract}
+\input{frontmatter/acknowledgment}
+
+% ------------------------------ contents -------------------------------------
+\tableofcontents
+
+\clearpage
+\addcontentsline{toc}{chapter}{List of Tables}
+\listoftables
+
+\clearpage
+\addcontentsline{toc}{chapter}{List of Figures}
+\listoffigures
+
+\input{frontmatter/abbreviations}
+
+% ================================ CHAPTERS ====================================
+\clearpage
+\pagenumbering{arabic}
+
+\input{chapters/1-introduction}
+\input{chapters/2-literature-survey}
+\input{chapters/3-methodology}
+\input{chapters/4-design-implementation}
+\input{chapters/5-results-discussion}
+\input{chapters/6-conclusion}
+
+% ================================ BACK MATTER =================================
+\input{backmatter/references}
+\input{backmatter/publication}
+\input{backmatter/plagiarism}
+
+\appendix
+% Appendix chapter headings read "APPENDIX A" etc.
+\renewcommand{\chaptertitlename}{Appendix}
+\input{backmatter/appendix-a-api}
+\input{backmatter/appendix-b-repo}
+
+\end{document}

@@ -1,0 +1,79 @@
+%========================= APPENDIX B: REPOSITORY =============================
+\chapter{Repository Layout and Verification Artifacts}
+\label{app:repo}
+
+\section{Repository Layout}
+
+\begin{lstlisting}[style=code]
+tutor/
+|-- README.md
+|-- docs/                  # design set (UML): vision, architecture,
+|                          # domain model, agent design, sequences,
+|                          # API contract, Android architecture, SDLC
+|-- backend/               # FastAPI + LangGraph service
+|   |-- app/
+|   |   |-- api/           # routers, dependencies
+|   |   |-- core/          # config (typed Settings), logging, errors
+|   |   |-- domain/        # entities, value objects, schemas
+|   |   |-- agents/        # LangGraph graph, nodes, prompts
+|   |   |-- providers/     # LLM + TTS adapters (mock + Gemini)
+|   |   |-- services/      # generation facade, assembler
+|   |   |-- repositories/  # lesson cache + asset store
+|   |   `-- tools/         # list_models helper
+|   |-- tests/             # 48 hermetic, key-free tests
+|   |-- Dockerfile
+|   `-- docker-compose.yml
+|-- android/               # Kotlin + Compose client
+|   `-- app/src/main/...   # ui/ (topic, player, history),
+|                          # domain/, data/ (remote, local)
+`-- .github/workflows/     # backend-ci, backend-deploy,
+                           # android-ci, android-release
+\end{lstlisting}
+
+\section{Backend Test Coverage Summary}
+
+The 48-test hermetic suite covers, by area:
+
+\begin{itemize}
+  \item \textbf{Validator} --- accepts valid SVG/segments; rejects malformed
+        XML, missing \texttt{viewBox}, unknown identifiers, empty and
+        non-contiguous segments.
+  \item \textbf{Generation graph} --- happy path from mock providers;
+        repair-loop recovery after an injected broken reference; clean
+        failure when the retry budget is exhausted.
+  \item \textbf{API contract} --- request/response schemas for all
+        endpoints; 200-versus-202 cache behaviour; the error envelope for
+        each error code; job lifecycle.
+  \item \textbf{Repositories} --- memory and filesystem lesson/asset stores,
+        including round-tripping manifests and assets.
+  \item \textbf{Gemini adapters} --- structured-output handling, PCM-to-WAV
+        wrapping with byte-derived durations, and retry/backoff, exercised
+        against a faked SDK client (no network, no keys).
+  \item \textbf{Configuration} --- provider/engine/storage selection from
+        settings; the session fixture that strips environment variables and
+        disables \texttt{.env} loading.
+\end{itemize}
+
+\section{Continuous Integration Workflows}
+
+\begin{table}[htbp]
+\caption{GitHub Actions workflows}
+\label{tab:ci}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}lp{0.28\textwidth}p{0.44\textwidth}@{}}
+\toprule
+\textbf{Workflow} & \textbf{Trigger} & \textbf{Action}\\
+\midrule
+\texttt{backend-ci} & Push / pull request & Run the hermetic pytest suite;
+build the Docker image\\
+\texttt{backend-deploy} & Manual / tag & Push image to the container
+registry; deploy over SSH to the cloud host (auto-HTTPS proxy)\\
+\texttt{android-ci} & Push / pull request & Assemble the debug APK and
+upload it as an artifact\\
+\texttt{android-release} & Tag & Build a signed release APK and attach it to
+a GitHub Release (debug-key fallback)\\
+\bottomrule
+\end{tabular}
+\end{table}

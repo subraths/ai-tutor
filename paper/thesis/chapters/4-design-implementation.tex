@@ -1,0 +1,464 @@
+%==============================================================================
+\chapter{Design Implementation}
+\label{ch:design}
+%==============================================================================
+
+This chapter details the realized design: the system architecture
+(Section~\ref{sec:sysarch}), the domain model and lesson manifest
+(Section~\ref{sec:domainmodel}), the backend implementation
+(Section~\ref{sec:backendimpl}), the REST API (Section~\ref{sec:apidesign}),
+the Android client (Section~\ref{sec:clientimpl}), the design patterns used
+at the seams (Section~\ref{sec:patterns}), and the engineering
+infrastructure --- hermetic testing, containerization, and CI/CD
+(Section~\ref{sec:infra}).
+
+%------------------------------------------------------------------------------
+\section{System Architecture}
+\label{sec:sysarch}
+%------------------------------------------------------------------------------
+
+Figure~\ref{fig:arch} shows the shape of the system: a relatively thin,
+offline-first Android client talking over HTTPS to a stateless FastAPI
+backend, which orchestrates hosted AI services through swappable adapters.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners, align=center, minimum height=8mm,
+              inner sep=4pt, fill=blue!4},
+  ext/.style={draw, rounded corners, align=center, minimum height=8mm,
+              inner sep=4pt, fill=orange!8},
+  grp/.style={draw, dashed, rounded corners, inner sep=8pt},
+  >={Stealth}
+]
+% Client column
+\node[box] (ui)   {UI / Screens\\(Compose)};
+\node[box, below=5mm of ui]   (vm)  {ViewModels\\(StateFlow)};
+\node[box, below=5mm of vm]   (uc)  {UseCases\\(domain)};
+\node[box, below=5mm of uc, xshift=-14mm] (local) {Local Repo\\(Room + Files)};
+\node[box, below=5mm of uc, xshift=16mm]  (remote){Remote Repo\\(Retrofit)};
+
+\begin{scope}[on background layer]
+\node[grp, fit=(ui)(vm)(uc)(local)(remote), label=above:{\textbf{Android client (offline-first)}}] (client) {};
+\end{scope}
+
+% Backend column
+\node[box, right=38mm of vm] (rest) {REST API\\+ Job controller};
+\node[box, below=5mm of rest] (facade) {Generation\\Facade};
+\node[box, below=5mm of facade, xshift=-14mm] (graph) {LangGraph\\Agent};
+\node[box, below=5mm of facade, xshift=18mm]  (cache) {Cache +\\Asset repos};
+
+\begin{scope}[on background layer]
+\node[grp, fit=(rest)(facade)(graph)(cache), label=above:{\textbf{FastAPI backend (stateless + shared cache)}}] (backend) {};
+\end{scope}
+
+% External column
+\node[ext, right=26mm of rest] (llm) {Gemini\\LLM};
+\node[ext, below=8mm of llm] (tts) {Gemini\\TTS};
+
+\begin{scope}[on background layer]
+\node[grp, fit=(llm)(tts), label=above:{\textbf{Hosted AI}}] (ai) {};
+\end{scope}
+
+% edges
+\draw[->] (ui) -- (vm);
+\draw[->] (vm) -- (uc);
+\draw[->] (uc) -- (local);
+\draw[->] (uc) -- (remote);
+\draw[->] (remote) -- node[above, sloped, font=\footnotesize]{HTTPS} (rest);
+\draw[->] (rest) -- (facade);
+\draw[->] (facade) -- (graph);
+\draw[->] (facade) -- (cache);
+\draw[->] (graph) -- (llm);
+\draw[->] (graph) -- (tts);
+\end{tikzpicture}
+\caption{System architecture. A thin offline-first Android client talks to a
+stateless FastAPI backend over HTTPS. The backend orchestrates hosted AI
+through swappable provider adapters and serves repeated topics from a shared
+cache.}
+\label{fig:arch}
+\end{figure}
+
+In deployment terms, the backend runs as a single container (Uvicorn +
+FastAPI) whose generation work executes as asynchronous background tasks; the
+lesson cache and asset store run, per configuration, either in memory, on the
+filesystem, or against a database and object storage. The interfaces are
+identical across these profiles, so promotion from the development profile to
+a separate worker with cloud storage requires no call-site changes. The
+production instance is deployed on a cloud virtual machine behind an
+auto-HTTPS reverse proxy (Section~\ref{sec:infra}).
+
+%------------------------------------------------------------------------------
+\section{Domain Model and Lesson Manifest}
+\label{sec:domainmodel}
+%------------------------------------------------------------------------------
+
+\subsection{Core Entities}
+
+The backend's domain layer defines two central entities.
+
+A \textbf{Lesson} carries an identifier, the original topic and its
+normalized \texttt{topic\_key}, a display title, language and voice
+parameters, the SVG document, the ordered list of segments, the total
+duration, and a creation timestamp. A \textbf{Segment} carries its index, the
+narration text, the list of SVG element identifiers it references, a
+reference to its audio asset, and its measured duration in milliseconds.
+
+Four invariants are enforced on these entities:
+
+\begin{enumerate}
+  \item \texttt{Lesson.svg} is well-formed XML with a \texttt{viewBox};
+  \item every value in \texttt{Segment.svg\_element\_ids} exists as an
+        \texttt{id} in \texttt{Lesson.svg};
+  \item $\texttt{total\_duration\_ms} = \sum_i \texttt{duration\_ms}_i$; and
+  \item segments are contiguous and ordered by index starting at 0.
+\end{enumerate}
+
+Invariants (1) and (2) are exactly what the deterministic gate of
+Section~\ref{sec:gate} checks; (3) and (4) are established by the assembler.
+
+\subsection{The Lesson Manifest}
+
+The manifest is the wire and storage contract shared by the API and the
+device (Listing~\ref{lst:manifest}). Asset URLs are downloadable; after
+download the device rewrites them to local file paths, which is what makes
+offline replay a non-event.
+
+\begin{figure}[htbp]
+\begin{lstlisting}[style=code,
+  caption={Lesson manifest (abridged): the wire and storage contract.},
+  label={lst:manifest}]
+{
+  "id": "les_8f3a...",
+  "topic": "Photosynthesis",
+  "title": "How Photosynthesis Works",
+  "language": "en",
+  "voice": "en-US-neutral",
+  "total_duration_ms": 41200,
+  "svg": { "asset_id": "ast_svg_01", "url": ".../assets/ast_svg_01" },
+  "segments": [
+    {
+      "index": 0,
+      "text": "Sunlight strikes the leaf and is captured by the plant.",
+      "svg_element_ids": ["sun", "leaf"],
+      "audio": { "asset_id": "ast_aud_00", "url": ".../assets/ast_aud_00" },
+      "duration_ms": 4200
+    },
+    {
+      "index": 1,
+      "text": "Chlorophyll inside the chloroplasts absorbs that light energy.",
+      "svg_element_ids": ["chloroplast", "chlorophyll"],
+      "audio": { "asset_id": "ast_aud_01", "url": ".../assets/ast_aud_01" },
+      "duration_ms": 3100
+    }
+  ]
+}
+\end{lstlisting}
+\end{figure}
+
+\subsection{Persistence Schemas}
+
+On the backend, three stores back the service: \texttt{CACHED\_LESSON}
+(keyed by \texttt{topic\_key}, holding the manifest and a hit counter),
+\texttt{GENERATION\_JOB} (job id, topic key, status, progress, resulting
+lesson id or error), and \texttt{ASSET} (asset id, kind
+$\in\{\texttt{svg},\texttt{audio}\}$, content type, storage path). On the
+device, Room stores \texttt{LESSON\_ENTITY} (metadata plus local SVG path)
+and \texttt{SEGMENT\_ENTITY} (text, JSON-encoded identifier list, local
+audio path, duration), while the binary assets live in app-private files.
+
+%------------------------------------------------------------------------------
+\section{Backend Implementation}
+\label{sec:backendimpl}
+%------------------------------------------------------------------------------
+
+The backend is a Python FastAPI application of roughly two thousand lines,
+organized by responsibility:
+
+\begin{itemize}
+  \item \texttt{app/api} --- routers and dependency wiring;
+  \item \texttt{app/core} --- typed settings, logging, error envelope;
+  \item \texttt{app/domain} --- entities, value objects, Pydantic schemas;
+  \item \texttt{app/agents} --- the LangGraph graph and prompts;
+  \item \texttt{app/providers} --- LLM and TTS adapters (mock and Gemini);
+  \item \texttt{app/services} --- the generation facade and assembler; and
+  \item \texttt{app/repositories} --- lesson cache and asset stores.
+\end{itemize}
+
+A single composition root wires these together, so swapping any
+implementation happens in one place plus the typed settings object.
+
+\subsection{Configuration over Hard-Coding}
+
+Everything that varies between environments is read from environment
+variables through one typed settings object, following the twelve-factor
+configuration guideline~\cite{twelvefactor}: the choice of LLM and TTS
+provider (mock or Gemini), the generation engine, the model identifiers, the
+storage backend (memory or filesystem), and the loop budgets $K$ and $R$.
+Model identifiers deserve emphasis: hosted model names change over time, so
+they are configuration, not code. A small helper
+(\texttt{python -m app.tools.list\_models}) lists the live models so the
+pinned name can be confirmed; at the time of writing the backend is pinned to
+a Flash-class Gemini text model (\texttt{gemini-2.5-flash}) and a Flash-class
+Gemini speech model, both set in settings. The same codebase runs on mock or
+real providers depending only on settings --- the property that keeps the
+test suite fast and key-free.
+
+\subsection{Provider Adapters}
+
+Two narrow interfaces define what the pipeline needs. The \texttt{LLMProvider}
+can plan concepts, draw an SVG, critique and refine an SVG, write narration
+as structured data, and repair a drawing-plus-narration given an error list.
+The \texttt{TTSProvider} turns text into an audio clip and reports its
+duration. Each has two implementations:
+
+\begin{itemize}
+  \item \textbf{Mock providers} are deterministic and need no network ---
+        ideal for tests and local development.
+  \item \textbf{Gemini providers} call the hosted models through the
+        \texttt{google-genai} SDK, using schema-constrained structured output
+        for plans, narration, and repairs. The TTS adapter receives raw PCM
+        audio, wraps it as a WAV file, and computes the exact duration from
+        the byte count and sample rate --- the duration is a measured fact,
+        not an estimate. Both adapters retry transient errors with
+        exponential backoff.
+\end{itemize}
+
+A provider factory builds a coherent set of providers from settings
+(abstract factory), and the generation facade
+(\texttt{LessonGenerationFacade}) exposes one entry point that checks the
+cache, runs the graph if needed, and persists the result.
+
+\subsection{The Generation Graph in Code}
+
+The pipeline of Section~\ref{sec:genmethod} is implemented as a LangGraph
+\texttt{StateGraph} over a typed state object whose fields are set
+progressively by the nodes: \texttt{topic} and \texttt{options} at entry;
+\texttt{plan} by the planner; \texttt{svg} by the generator and refiner;
+\texttt{segments} by the narration generator and repairer;
+\texttt{validation} by the validator; \texttt{retries} by the repair loop;
+\texttt{rendered} (audio plus durations) by the TTS renderer; \texttt{lesson}
+by the assembler; and \texttt{error} by any node on hard failure. Conditional
+edges route on the critique score and the validation verdict, with both loops
+bounded by settings. Because the graph drives the provider \emph{interfaces},
+the identical graph runs on mocks in tests and on Gemini in production.
+
+%------------------------------------------------------------------------------
+\section{API Design}
+\label{sec:apidesign}
+%------------------------------------------------------------------------------
+
+The API is JSON over HTTPS under a versioned base path (\texttt{/api/v1}).
+Generation is asynchronous because a cold lesson takes seconds, while cache
+hits return immediately. Table~\ref{tab:api} lists the endpoints.
+
+\begin{table}[htbp]
+\caption{REST API endpoints}
+\label{tab:api}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}llp{0.30\textwidth}p{0.24\textwidth}@{}}
+\toprule
+\textbf{Method} & \textbf{Path} & \textbf{Purpose} & \textbf{Success}\\
+\midrule
+POST & \texttt{/lessons} & Request a lesson for a topic & 200 (cache hit,
+manifest) or 202 (job started)\\
+GET & \texttt{/lessons/jobs/\{id\}} & Poll job status & 200 (status,
+progress, stage)\\
+GET & \texttt{/lessons/\{id\}} & Fetch a lesson manifest & 200 (manifest)\\
+GET & \texttt{/assets/\{id\}} & Download an asset (SVG/audio) & 200 (bytes)\\
+GET & \texttt{/healthz} & Liveness/readiness & 200\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A job response reports \texttt{status} $\in$ \{\texttt{queued},
+\texttt{running}, \texttt{succeeded}, \texttt{failed}\}, a progress
+percentage, and the current pipeline stage (\texttt{planning},
+\texttt{svg}, \texttt{narration}, \texttt{validating},
+\texttt{tts\_rendering}, \texttt{assembling}), which the client surfaces in
+its progress UI. All errors share one envelope --- a machine-readable
+\texttt{code} (for example \texttt{INVALID\_TOPIC},
+\texttt{GENERATION\_FAILED}, \texttt{PROVIDER\_UNAVAILABLE}), a human
+message, a \texttt{retryable} flag, and a correlation \texttt{request\_id}
+--- so the client has exactly one error-handling path.
+\texttt{POST /lessons} is idempotent per topic key, and concurrent identical
+requests coalesce onto a single job (Section~\ref{sec:cachemethod}).
+
+%------------------------------------------------------------------------------
+\section{Android Client Implementation}
+\label{sec:clientimpl}
+%------------------------------------------------------------------------------
+
+The client is a Kotlin application of roughly 3\,800 lines using Jetpack
+Compose, structured by Clean Architecture~\cite{martin2017clean} into three
+layers with dependencies pointing inward:
+
+\begin{itemize}
+  \item \textbf{Presentation} --- Compose screens (Topic, Player, History)
+        and ViewModels that expose a single immutable \texttt{UiState} via
+        \texttt{StateFlow}; the UI is a pure function of state.
+  \item \textbf{Domain} --- pure Kotlin use cases (generate lesson, get
+        history, play lesson, delete lesson), entities, and repository
+        interfaces; no Android dependencies.
+  \item \textbf{Data} --- a remote repository (Retrofit) implementing
+        generation and download against the API, and a local repository
+        (Room + file store) implementing persistence; both implement the
+        domain's interfaces (dependency inversion).
+\end{itemize}
+
+Dependency injection is performed by a small manual composition root
+(\texttt{AppContainer}); this was a deliberate deviation from the initial
+Hilt plan, chosen for build reliability, and is swappable later since the
+seams are the repository interfaces.
+
+\subsection{Generation Flow on the Device}
+
+The Topic screen submits the topic and then polls the job endpoint with
+backoff, rendering the reported stage and progress. On success it fetches the
+manifest and hands it to the player. Errors surface the envelope's message
+with a retry affordance (FR-12).
+
+\subsection{Synchronized Playback}
+
+The player is the product's core (Figure~\ref{fig:player}). Two components
+cooperate:
+
+\begin{itemize}
+  \item \textbf{Highlight engine.} The SVG is rendered in a WebView as an
+        inline document together with a small app-owned script exposing
+        \texttt{highlight(ids)} and \texttt{clearHighlight()}, which toggle a
+        CSS class producing a glow-and-scale emphasis. The WebView renders
+        \emph{only} this app-generated page; generated SVG is treated as
+        untrusted markup and no content-supplied script is executed.
+  \item \textbf{Segment clock.} ExoPlayer is loaded with one media item per
+        segment clip, in order. The player's current-item index \emph{is} the
+        synchronization state: on each transition to item $i$, the ViewModel
+        highlights $E_i$ and updates the caption to the segment text.
+\end{itemize}
+
+Transport controls (previous, play/pause, next, replay) map onto playlist
+operations, and the player follows the state machine
+Idle $\to$ Loading $\to$ Ready $\to$ Playing $\rightleftharpoons$ Paused, with
+Seeking, Completed (replay returns to Playing), and Error (retry returns to
+Loading) states.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  n/.style={draw, rounded corners, align=center, minimum height=8mm,
+            inner sep=4pt, fill=blue!4},
+  >={Stealth}
+]
+\node[n] (exo) {ExoPlayer\\playlist of $n$ clips};
+\node[n, right=18mm of exo] (vmn) {PlayerViewModel\\(UiState)};
+\node[n, right=18mm of vmn] (web) {WebView\\inline SVG + JS};
+\node[n, below=8mm of vmn] (cap) {Caption\\(segment text)};
+
+\draw[->] (exo) -- node[above,font=\footnotesize,align=center]
+  {item $i$\\started} (vmn);
+\draw[->] (vmn) -- node[above,font=\footnotesize,align=center]
+  {highlight($E_i$)} (web);
+\draw[->] (vmn) -- (cap);
+\end{tikzpicture}
+\caption{Synchronized playback. The audio player's current-item index drives
+both the SVG highlight and the caption; no other timing state exists.}
+\label{fig:player}
+\end{figure}
+
+\subsection{Offline Persistence and History}
+
+``Save offline'' downloads the SVG and every audio clip into app-private
+files and persists lesson and segment rows in Room; manifest asset URLs are
+rewritten to local file URIs. The player is source-agnostic --- it receives a
+loader function, so a saved lesson loads from local URIs through exactly the
+same code path as a fresh one, and replays with zero network calls (NFR-2).
+The History screen observes Room reactively (newest first); delete removes
+both the rows and the files. History never leaves the device (NFR-7).
+
+%------------------------------------------------------------------------------
+\section{Design Patterns at the Seams}
+\label{sec:patterns}
+%------------------------------------------------------------------------------
+
+Table~\ref{tab:patterns} maps the classical patterns~\cite{gamma1994} to
+their locations and purposes in the system. The common motivation is
+\emph{soft dependencies}: every external or replaceable concern sits behind
+an interface chosen once, in one place.
+
+\begin{table}[htbp]
+\caption{Design patterns employed}
+\label{tab:patterns}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}lp{0.34\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Pattern} & \textbf{Where} & \textbf{Why}\\
+\midrule
+Strategy & \texttt{LLMProvider}, \texttt{TTSProvider} & Swap AI vendors
+without touching the graph\\
+Abstract Factory & \texttt{ProviderFactory} & Build a coherent provider set
+from configuration\\
+Adapter & Gemini LLM/TTS classes & Wrap vendor SDKs behind the project's
+interfaces\\
+Builder & \texttt{LessonBuilder} & Assemble a valid \texttt{Lesson}
+incrementally\\
+Repository & Lesson cache, asset store, Android repositories & Hide storage
+behind interfaces; memory/filesystem/DB profiles\\
+Facade & \texttt{LessonGenerationFacade} & One entry point over cache check,
+graph, and persistence\\
+Pipeline & LangGraph nodes and conditional edges & Staged generation with
+bounded loops\\
+DTO & Pydantic schemas; manifest & Typed boundaries between layers and over
+the wire\\
+Dependency Injection & FastAPI wiring; \texttt{AppContainer} & Testability;
+single composition root\\
+Observer & \texttt{StateFlow} UiState; Room \texttt{Flow} & Reactive UI as a
+pure function of state\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{Hermetic Testing, Containerization, and CI/CD}
+\label{sec:infra}
+%------------------------------------------------------------------------------
+
+\subsection{Hermetic, Key-Free Tests}
+
+The backend suite comprises 48 tests covering the validator (both accepting
+and rejecting), each graph node, the repair loop (recovery and
+exhausted-budget failure), the API contract including the error envelope, the
+job model, the repositories, and the Gemini adapters via a faked SDK client.
+A session-level fixture disables \texttt{.env} loading and strips all
+\texttt{TUTOR\_*} environment variables, so the suite is deterministic,
+requires no secrets, and makes zero live API calls --- in any clone and in
+CI.
+
+\subsection{Containerization and Continuous Delivery}
+
+The backend ships as a Docker image with a \texttt{/healthz} healthcheck and
+a Compose profile for local orchestration. Four GitHub Actions workflows
+automate the path from commit to artifact:
+
+\begin{enumerate}
+  \item \textbf{backend-ci} --- runs the hermetic test suite and builds the
+        Docker image on every push;
+  \item \textbf{backend-deploy} --- publishes the image to a container
+        registry and deploys it over SSH to the cloud host, where an
+        auto-HTTPS reverse proxy terminates TLS;
+  \item \textbf{android-ci} --- assembles a debug APK as a build artifact;
+        and
+  \item \textbf{android-release} --- produces a signed release APK and
+        attaches it to a GitHub Release, with a debug-key fallback when no
+        signing secret is configured.
+\end{enumerate}
+
+Together with configuration-through-environment, this makes the entire system
+reproducible: a fresh clone can run the full test suite with no keys, and a
+tagged commit yields both a deployable backend image and an installable
+client build with no manual steps.

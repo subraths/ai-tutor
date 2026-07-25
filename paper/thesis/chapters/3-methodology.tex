@@ -1,0 +1,432 @@
+%==============================================================================
+\chapter{Methodology}
+\label{ch:methodology}
+%==============================================================================
+
+This chapter presents the methodology of the work: the requirements that
+define the problem precisely (Section~\ref{sec:requirements}), the three
+locked design decisions that shape the whole system
+(Section~\ref{sec:decisions}), the agentic generation method with its
+deterministic validation gate (Section~\ref{sec:genmethod}), the
+synchronization model (Section~\ref{sec:syncmethod}), the caching and
+idempotency strategy (Section~\ref{sec:cachemethod}), and the phased
+development and testing process followed (Section~\ref{sec:sdlc}).
+
+%------------------------------------------------------------------------------
+\section{Requirements Analysis}
+\label{sec:requirements}
+%------------------------------------------------------------------------------
+
+\subsection{Target Users and User Stories}
+
+The system targets three user groups: students revising a concept,
+self-learners exploring an unfamiliar topic, and educators generating quick
+visual aids. The core user stories are listed in Table~\ref{tab:stories}.
+
+\begin{table}[htbp]
+\caption{Core user stories}
+\label{tab:stories}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}lp{0.14\textwidth}p{0.34\textwidth}p{0.30\textwidth}@{}}
+\toprule
+\textbf{Id} & \textbf{As a\ldots} & \textbf{I want to\ldots} & \textbf{So that\ldots}\\
+\midrule
+US-1 & learner & type a topic and get a narrated diagram & I understand it visually and aurally\\
+US-2 & learner & see diagram parts highlight as they are explained & I know exactly what is being described\\
+US-3 & learner & pause, resume, and replay any segment & I can learn at my own pace\\
+US-4 & learner & find all my past topics in a history list & I can revisit lessons\\
+US-5 & learner & replay a saved lesson with no internet & I can study offline\\
+US-6 & learner & retry generation if a result is poor & I get a usable lesson\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Functional Requirements}
+
+\begin{description}
+  \item[FR-1] Accept a free-text topic from the user.
+  \item[FR-2] Generate an SVG diagram with stable, semantic element
+        identifiers.
+  \item[FR-3] Generate an ordered narration script split into segments, each
+        referencing the SVG element identifiers it describes.
+  \item[FR-4] Produce one TTS audio clip per segment with a measured
+        duration.
+  \item[FR-5] Assemble a self-contained lesson manifest (SVG + segments +
+        audio references + durations).
+  \item[FR-6] Serve cached lessons for previously requested topics.
+  \item[FR-7] On device: download and persist the full lesson (manifest +
+        assets) locally.
+  \item[FR-8] On device: play the lesson, highlighting each segment's SVG
+        element identifiers while its audio plays.
+  \item[FR-9] On device: provide play, pause, resume, seek-by-segment, and
+        replay controls.
+  \item[FR-10] On device: maintain a searchable history of saved lessons.
+  \item[FR-11] On device: replay any saved lesson fully offline.
+  \item[FR-12] Surface clear errors and allow regeneration on failure.
+\end{description}
+
+\subsection{Non-Functional Requirements}
+
+\begin{table}[htbp]
+\caption{Non-functional requirements}
+\label{tab:nfr}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}llp{0.62\textwidth}@{}}
+\toprule
+\textbf{Id} & \textbf{Category} & \textbf{Requirement}\\
+\midrule
+NFR-1 & Performance & Cache hit returns a manifest in under 500\,ms; cold
+generation target under 30\,s\\
+NFR-2 & Offline & Saved lessons play with zero network calls\\
+NFR-3 & Reliability & Generation validates SVG well-formedness and identifier
+consistency before caching\\
+NFR-4 & Cost & Identical topics are generated once and shared via cache\\
+NFR-5 & Portability & LLM and TTS providers are swappable behind adapters\\
+NFR-6 & Maintainability & Clear layering, documented design patterns,
+unit-testable core\\
+NFR-7 & Privacy & No accounts; personal history never leaves the device\\
+NFR-8 & Accessibility & Captions shown; adjustable playback; readable
+contrast\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Scope Exclusions (Version 1)}
+
+User accounts and cross-device cloud synchronization, editing or annotating
+generated diagrams, a multi-language user interface (lesson language is a
+parameter, but the UI is single-language), social and sharing features, and
+real-time word-level highlighting (segment-level synchronization is used, as
+motivated in Section~\ref{sec:syncmethod}) are explicitly out of scope.
+
+%------------------------------------------------------------------------------
+\section{Key Design Decisions}
+\label{sec:decisions}
+%------------------------------------------------------------------------------
+
+Three decisions, taken early and documented before implementation, shape
+everything else in the system.
+
+\textbf{Decision 1: Synchronization by pre-rendered timed segments.} Rather
+than align voice to highlight at play time, the server splits the narration
+into segments, renders one audio clip per segment, and \emph{measures} each
+clip's duration. The device simply plays the clips in order and highlights
+the parts named by the current clip. This makes synchronization deterministic
+and removes any need for the network during playback (NFR-2), at the cost of
+segment-level rather than word-level pointer granularity.
+
+\textbf{Decision 2: Stateless backend with a shared cache.} There are no user
+accounts on the server (NFR-7). Lessons are cached under a normalized topic
+key, so a popular topic is generated once and then served to everyone
+(NFR-1, NFR-4). Statelessness keeps the server trivially scalable and simple
+to reason about; all personal state (history) lives on the device.
+
+\textbf{Decision 3: Provider adapters.} The language model and the speech
+engine sit behind narrow interfaces; the pipeline talks to those interfaces
+and never to a vendor SDK directly (NFR-5). Choosing a model --- or replacing
+the vendor entirely --- is a configuration change. This also acknowledges an
+operational reality: hosted model identifiers change over time, so the model
+name is treated as configuration, verified against the live API by a small
+helper tool, and pinned in settings rather than in code.
+
+%------------------------------------------------------------------------------
+\section{The Agentic Generation Method}
+\label{sec:genmethod}
+%------------------------------------------------------------------------------
+
+\subsection{Why a Graph and Not a Single Prompt}
+
+A single mega-prompt (``produce a diagram, narration, and timing for topic
+X'') couples all failure modes together: if any part of the output is
+malformed, the whole response must be regenerated, and there is no precise
+error signal to steer the retry. Decomposing generation into a
+\emph{state graph} of small steps gives three properties the product needs:
+
+\begin{enumerate}
+  \item each artifact (plan, drawing, narration) can be \emph{validated and
+        repaired in isolation}, with concrete error messages;
+  \item each node is independently testable against mock providers; and
+  \item deterministic steps (validation, TTS rendering, assembly) are
+        separated from probabilistic ones, so reliability mechanisms attach
+        exactly where the risk is.
+\end{enumerate}
+
+The pipeline is implemented as a LangGraph \texttt{StateGraph}: a single
+typed state object flows through nodes connected by conditional edges. The
+graph is small, static, and every loop carries a configured budget --- this
+is deliberate rejection of open-ended agent autonomy in favour of an
+inspectable, bounded process.
+
+\subsection{Pipeline Stages}
+
+Figure~\ref{fig:pipeline} shows the graph. Its nodes are:
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  node distance=5mm,
+  n/.style={draw, rounded corners, align=center, minimum width=62mm,
+            minimum height=8mm, fill=blue!4},
+  d/.style={draw, diamond, aspect=2.2, align=center, inner sep=1pt,
+            fill=yellow!12},
+  >={Stealth}
+]
+\node[n] (plan) {planner: outline concepts};
+\node[n, below=of plan] (svg) {svg\_generator: draw SVG with ids};
+\node[d, below=of svg] (crit) {critique\\good?};
+\node[n, below=of crit] (narr) {narration: segments $\rightarrow$ ids};
+\node[d, below=of narr] (val) {validate\\ids exist?};
+\node[n, below=of val] (tts) {tts\_renderer: audio + duration};
+\node[n, below=of tts] (asm) {assembler: build + cache};
+
+\draw[->] (plan) -- (svg);
+\draw[->] (svg) -- (crit);
+\draw[->] (crit) -- node[right,font=\footnotesize]{yes} (narr);
+\draw[->] (narr) -- (val);
+\draw[->] (val) -- node[right,font=\footnotesize]{yes} (tts);
+\draw[->] (tts) -- (asm);
+
+\draw[->] (crit.west) to[out=180,in=180,looseness=1.5]
+  node[left,font=\footnotesize,align=center]{no:\\refine\\(bounded, $K$)} (svg.west);
+\draw[->] (val.east) to[out=0,in=0,looseness=1.5]
+  node[right,font=\footnotesize,align=center]{no:\\repair\\(bounded, $R$)} (narr.east);
+\end{tikzpicture}
+\caption{The generation graph. A bounded critique-and-refine loop improves
+the drawing before narration is written; a bounded repair loop fixes
+narration that fails the deterministic validator. A lesson reaches the
+assembler only after it passes validation.}
+\label{fig:pipeline}
+\end{figure}
+
+\begin{description}
+  \item[Planner.] The model outlines the concepts and a visual plan for the
+        topic. Planning once, up front, keeps the drawing and the narration
+        aligned to the same concept set.
+  \item[SVG generator.] Given the plan, the model draws the SVG and assigns a
+        semantic \texttt{id} to every meaningful part (for example
+        \texttt{sun}, \texttt{leaf}, \texttt{chloroplast}). The prompt
+        instructs the model to return \emph{only} SVG.
+  \item[Critique and refine.] A critique step scores the drawing and lists
+        concrete problems. If the score is below a threshold and budget
+        remains, a refine step redraws with that feedback and the critique
+        runs again, up to $K$ passes. If the budget runs out, the best
+        drawing so far is accepted. This is a focused application of the
+        self-refine idea~\cite{madaan2023selfrefine}, applied only to the
+        artifact that benefits most.
+  \item[Narration generator.] Given the \emph{finished} drawing, the model
+        writes ordered narration as schema-constrained JSON: each segment has
+        text and a list of element identifiers. Writing narration against the
+        real drawing steers the model toward referencing parts that exist ---
+        but does not guarantee it, which is why the next node exists.
+  \item[Validator.] This node uses no model (Section~\ref{sec:gate}).
+  \item[Repair.] If validation fails and retries remain (budget $R$), the
+        repair step receives the \emph{exact} list of offending identifiers
+        and parse errors and is asked for the minimal correction; validation
+        then runs again. If the budget is exhausted, the job fails cleanly
+        --- the system refuses service rather than caching a broken lesson.
+  \item[TTS renderer.] For each segment, the speech provider synthesizes
+        audio; the clip is stored as an asset and its measured duration
+        recorded. Segments are independent, so this step is parallelizable.
+  \item[Assembler.] A builder assembles the lesson incrementally --- title,
+        SVG asset, and each segment with text, identifiers, audio asset, and
+        duration --- and the finished lesson is cached.
+\end{description}
+
+\subsection{The Deterministic Validation Gate}
+\label{sec:gate}
+
+The validator is the reason the product's central feature is trustworthy, so
+its checks are stated precisely. Given the SVG string and the narration
+segments, it verifies, using only an XML parser and simple logic:
+
+\begin{enumerate}
+  \item the SVG parses as well-formed XML and declares a \texttt{viewBox};
+  \item every identifier referenced by every segment's
+        \texttt{svg\_element\_ids} exists as an \texttt{id} attribute in the
+        SVG;
+  \item narration is non-empty, segment texts are non-empty, and segments
+        are ordered and contiguous from index~0; and
+  \item (as a soft, non-blocking signal) major SVG elements never referenced
+        by any segment are flagged for coverage.
+\end{enumerate}
+
+The result is a pass-or-fail verdict with a machine-readable error list.
+Because the validator contains no model, it cannot hallucinate, costs
+nothing, and always terminates. It is the \emph{hard gate}: the invariant
+enforced system-wide is that \emph{no lesson whose narration references a
+non-existent element is ever cached or served}. LLM-based judges were
+deliberately not used for this check --- a probabilistic judge in front of a
+correctness property merely moves the hallucination problem, whereas an XML
+parser settles it.
+
+\subsection{Prompting Strategy}
+
+Four practices keep the probabilistic steps steerable: (i) the \emph{stable
+ids contract} embedded in the SVG and narration prompts; (ii)
+\emph{structured output} everywhere a machine consumes the response, with
+Pydantic validation at the boundary; (iii) \emph{repair prompts} that contain
+the validator's concrete error list rather than a vague ``fix this''; and
+(iv) \emph{low temperature} for validation-sensitive steps, with bounded
+retries ($K$ and $R$, typically 2) to cap cost and latency.
+
+%------------------------------------------------------------------------------
+\section{The Synchronization Model}
+\label{sec:syncmethod}
+%------------------------------------------------------------------------------
+
+Let a lesson have segments $s_0, s_1, \ldots, s_{n-1}$, where each $s_i$
+carries text, a set of element identifiers $E_i$, and an audio clip of
+measured duration $d_i$ milliseconds. The total lesson duration is
+$D=\sum_{i} d_i$. Playback is a simple loop driven by clip boundaries: when
+clip $i$ starts, highlight exactly the elements in $E_i$; when it ends, clear
+the highlight and advance to $i+1$. Pause, resume, and seek-by-segment fall
+out naturally, because the only synchronization state is the index of the
+current clip --- a quantity the audio player maintains anyway.
+
+Because each $d_i$ is computed on the server from the synthesized audio's
+byte count and sample rate (not estimated), the on-device timing cannot
+drift: the highlight changes precisely when the audio item changes. No
+network, no timestamps, and no alignment service are involved, so the same
+mechanism works identically online and offline. The trade-off, accepted
+knowingly, is granularity: a group of parts is lit for a whole sentence
+rather than each part at its spoken word.
+
+%------------------------------------------------------------------------------
+\section{Caching, Idempotency, and the Job Model}
+\label{sec:cachemethod}
+%------------------------------------------------------------------------------
+
+Generation is expensive (seconds, several model calls) while a cache hit is
+cheap, so the API is asynchronous. A topic is normalized into a
+\emph{topic key} (lower-cased, trimmed, whitespace-collapsed, language
+suffixed --- for example \texttt{photosynthesis|en}), which serves three
+roles at once:
+
+\begin{itemize}
+  \item \textbf{cache key} --- a request for a cached topic returns the
+        manifest immediately;
+  \item \textbf{idempotency key} --- repeated \texttt{POST} requests for the
+        same topic return the same job or the same cached lesson; and
+  \item \textbf{coalescing key} --- concurrent requests for the same topic
+        attach to one in-flight job instead of spawning duplicate
+        generations, so the peak cost of a suddenly popular topic is one
+        generation.
+\end{itemize}
+
+A generation job progresses through
+$\texttt{queued} \to \texttt{running} \to \texttt{succeeded} \mid
+\texttt{failed}$, exposing progress and the current pipeline stage; the
+client polls with backoff until a terminal state
+(Section~\ref{sec:apidesign}).
+
+%------------------------------------------------------------------------------
+\section{Development Methodology and Testing Strategy}
+\label{sec:sdlc}
+%------------------------------------------------------------------------------
+
+\subsection{Phased, Design-First Process}
+
+The project followed a documented, phased process with an explicit exit
+criterion per phase (Table~\ref{tab:phases}) --- design first (a full set of
+UML artifacts: component, class, ER, sequence, and state diagrams), then
+vertical implementation slices, each leaving the system demonstrably working.
+Two process rules were applied throughout. First, \emph{providers are
+mockable from day one}: every backend phase runs against deterministic mock
+LLM/TTS implementations, so development and tests never depend on live AI
+keys. Second, \emph{definition of done} per phase includes code, tests, and
+updated documentation and diagrams.
+
+\begin{table}[htbp]
+\caption{Development phases and exit criteria}
+\label{tab:phases}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}clp{0.55\textwidth}@{}}
+\toprule
+\textbf{Phase} & \textbf{Name} & \textbf{Exit criterion}\\
+\midrule
+0 & Vision \& requirements & Requirements agreed\\
+1 & Architecture \& design & UML design set reviewed and approved\\
+2 & Backend skeleton & \texttt{POST /lessons} returns a mock lesson end to end\\
+3 & AI pipeline & Graph produces a valid lesson from mocks; validator rejects
+bad identifiers\\
+4 & Real generation & Real topic $\to$ cached lesson with audio; cache-hit
+path works\\
+5 & Android skeleton & App generates a lesson and shows its manifest\\
+6 & Player + highlight & Narration plays with parts highlighting in sync\\
+7 & Offline \& history & Saved lesson replays with airplane mode on\\
+8 & Hardening \& CI/CD & Green CI; hermetic tests; containerized backend\\
+9 & Release preparation & Installable build + deployable backend\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Testing Strategy}
+
+Testing is organized by level on both sides of the system
+(Table~\ref{tab:testing}). The distinctive property of the backend suite is
+that it is \emph{hermetic and key-free}: a session-level fixture disables
+environment-file loading and strips all project environment variables, so the
+full suite runs with zero live API calls and no secrets --- in any clone and
+in CI. The Gemini adapters themselves are tested against a faked SDK client,
+which exercises the adapter logic (structured output handling, PCM-to-WAV
+wrapping, duration computation, retry/backoff) without the network. Risk
+analysis and mitigations tracked during development are summarized in
+Table~\ref{tab:risks}.
+
+\begin{table}[htbp]
+\caption{Testing levels}
+\label{tab:testing}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}lp{0.40\textwidth}p{0.38\textwidth}@{}}
+\toprule
+\textbf{Level} & \textbf{Backend} & \textbf{Android}\\
+\midrule
+Unit & Graph nodes, validator, builder, providers (mocked) & ViewModels,
+use cases, mappers\\
+Contract & API request/response schema tests & Repository $\leftrightarrow$
+API contract\\
+Integration & Graph end to end with mock providers; cache and asset store &
+Room DAO tests\\
+End to end & Golden-topic generation smoke against live models & Compose UI
+and offline-playback instrumentation\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\caption{Principal risks and mitigations}
+\label{tab:risks}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}p{0.30\textwidth}p{0.62\textwidth}@{}}
+\toprule
+\textbf{Risk} & \textbf{Mitigation}\\
+\midrule
+SVG quality/consistency from the LLM & Plan $\to$ generate $\to$ critique
+$\to$ refine loop; low temperature; golden-topic checks\\
+Identifier--narration mismatch & Hard validator gate: never cache if any
+referenced identifier is missing\\
+Hosted model identifier drift & Model name is configuration; helper verifies
+against the live API; adapter isolates the SDK\\
+TTS synchronization drift & Segment-level clips with byte-measured durations
+make synchronization deterministic\\
+Cold-start latency & Asynchronous jobs with progress UI; shared cache;
+per-segment TTS parallelizable\\
+Cost per generation & Topic-keyed cache; request coalescing; bounded loops\\
+Injected script in generated SVG & Treat SVG as untrusted; WebView restricted
+to the app's own highlight script\\
+Renderer choice (WebView vs.\ native) & Highlight engine behind an interface;
+decided by a spike in Phase~6\\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -1,0 +1,210 @@
+%==============================================================================
+\chapter{Results and Discussion}
+\label{ch:results}
+%==============================================================================
+
+This chapter reports what the running system produces and what was verified,
+and is explicit about what has not yet been measured. The claims below are
+about the realized system's observed behaviour; no user-study or
+learning-outcome figures are reported, because none were collected.
+
+%------------------------------------------------------------------------------
+\section{Results and Analysis}
+\label{sec:results}
+%------------------------------------------------------------------------------
+
+\subsection{End-to-End Generation Against Live Models}
+
+With the real Gemini providers configured, the pipeline produced a complete
+lesson for the topic \emph{Photosynthesis}: six narration segments totalling
+approximately forty-three seconds of audio, a well-formed SVG whose parts
+carry semantic identifiers such as \texttt{sun}, \texttt{leaf}, and
+\texttt{chloroplast}, narration whose references all passed the
+deterministic validator, and real synthesized speech for each segment. This
+single run exercises every node of the graph --- planner, SVG generator,
+critique/refine, narration generator, validator, TTS renderer, and assembler
+--- against live models. Figure~\ref{fig:diagram} shows the generated
+diagram as rendered by the app.
+
+\begin{figure}[htbp]
+\centering
+\shot[width=0.85\textwidth]{diagram.png}
+\caption{The diagram generated for \emph{Photosynthesis}, as shown in the
+app's full-screen view. Each labelled part --- the sun, the leaf, the
+chloroplast, the water and carbon-dioxide inputs, and the glucose and oxygen
+outputs --- is a separate SVG element with a stable identifier, which is
+exactly what lets the narration highlight it during playback.}
+\label{fig:diagram}
+\end{figure}
+
+The saved library shown in Figure~\ref{fig:screens} holds further lessons
+generated for unrelated topics --- the Pythagorean theorem and the
+Transformer architecture --- demonstrating that the pipeline is not tuned to
+a single subject: the same prompts, graph, and validator produced consistent
+lessons across a natural-science topic, a mathematical topic, and a
+computer-science topic.
+
+\begin{figure}[htbp]
+\centering
+\begin{tabular}{ccc}
+\shot[width=0.30\textwidth]{home.png} &
+\shot[width=0.30\textwidth]{player.png} &
+\shot[width=0.30\textwidth]{library.png}\\
+(a) Topic entry & (b) Player & (c) Library\\
+\end{tabular}
+\caption{The Android client. (a)~The home screen where a topic is typed.
+(b)~The player mid-lesson: the current segment's diagram parts are
+highlighted while its audio plays, with the caption below. (c)~The on-device
+library of saved lessons, each replayable fully offline.}
+\label{fig:screens}
+\end{figure}
+
+\subsection{The Validation Gate Works in Both Directions}
+
+The property the design promises is that the gate both catches broken
+lessons and does not block valid ones. Both directions were verified by the
+graph tests:
+
+\begin{itemize}
+  \item a lesson containing a deliberately broken part reference is
+        \emph{rejected} by the validator and routed into the repair loop,
+        and when the repair succeeds the corrected lesson passes and
+        proceeds to rendering; and
+  \item when repair cannot fix the problem within the retry budget $R$, the
+        job \emph{fails cleanly} --- no partial or inconsistent lesson is
+        ever cached.
+\end{itemize}
+
+Combined with the live run above (where valid generations passed the gate
+unimpeded), this confirms the system-wide invariant: every lesson that
+reaches the cache satisfies ``all referenced identifiers exist.''
+
+\subsection{Synchronization Behaviour}
+
+Because each segment's duration is computed from the synthesized audio's
+byte count and sample rate, and the on-device highlight is driven by the
+audio player's current-item index, the highlight transition coincides with
+the clip transition by construction. Playback, pause, resume,
+seek-by-segment, and replay all preserve synchronization, since the only
+synchronization state is the current clip index. The same behaviour holds
+for offline replays, where all assets are local files.
+
+\subsection{Reproducibility and Automation Results}
+
+Table~\ref{tab:verified} summarizes the verification of the engineering
+infrastructure.
+
+\begin{table}[htbp]
+\caption{Verified engineering results}
+\label{tab:verified}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}p{0.34\textwidth}p{0.58\textwidth}@{}}
+\toprule
+\textbf{Aspect} & \textbf{Verified result}\\
+\midrule
+Backend test suite & 48 hermetic tests pass with \emph{zero} live API calls
+and no keys present\\
+Container & Docker image builds; container serves \texttt{/healthz} (200);
+mock-provider generation returns the expected 202 asynchronous response with
+no key\\
+Client build & Debug APK assembles reproducibly in CI; release workflow
+produces a signed APK\\
+Deployment & Backend image published to a registry and deployed to a cloud
+host behind auto-HTTPS by the deploy workflow\\
+Offline path & Save-offline persists all assets locally; the player loads
+saved lessons from local file URIs through the same code path as fresh
+lessons\\
+Model-id resilience & Live model listing tool confirms pinned identifiers;
+changing models is a settings change only\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The Realized System at a Glance}
+
+\begin{table}[htbp]
+\caption{Realized system summary}
+\label{tab:summary}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Aspect} & \textbf{Realization}\\
+\midrule
+Backend & FastAPI, $\approx$2.0k LoC Python\\
+Client & Android/Compose, $\approx$3.8k LoC Kotlin\\
+Generation & LangGraph: plan $\to$ draw $\to$ critique/refine $\to$ narrate
+$\to$ validate $\to$ repair\\
+Gate & Deterministic non-LLM validator\\
+Models & Text + speech via swappable adapters (Gemini Flash class)\\
+Caching & Stateless, topic-keyed, coalesced jobs\\
+Offline & Room + file store; network-free replay\\
+Tests & 48 hermetic, key-free backend tests\\
+Delivery & Container + CI/CD + auto-HTTPS deployment\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%------------------------------------------------------------------------------
+\section{Discussion}
+\label{sec:discussion}
+%------------------------------------------------------------------------------
+
+\subsection{Analysis of the Design Choices}
+
+\textbf{The gate, not the model, carries the guarantee.} The central result
+of this work is architectural: the correctness-critical property (narration
+references resolve) is enforced by a component that cannot hallucinate. The
+LLM-facing mechanisms --- planning first, narrating against the finished
+drawing, structured output, low temperature --- \emph{reduce the frequency}
+of violations, and the repair loop \emph{recovers} from most of the rest,
+but the deterministic validator is what converts ``usually consistent'' into
+``never served inconsistent.'' This separation of concerns (probabilistic
+quality mechanisms in front of a deterministic correctness mechanism) is
+transferable to any system whose LLM outputs must satisfy checkable
+invariants.
+
+\textbf{Bounded loops keep the worst case owned.} Both self-correction loops
+carry explicit budgets, so the maximum number of model calls per lesson is
+known in advance, and the failure mode of an unfixable topic is a clean,
+retryable error rather than an unbounded spend. This is a deliberate
+divergence from open-ended agent designs in the literature.
+
+\textbf{The cache changes the economics.} Statelessness plus topic-keyed
+caching means the marginal cost of a popular topic tends to zero and the
+response time collapses to a lookup. Request coalescing caps the cost spike
+of a suddenly popular topic at one generation.
+
+\subsection{Limitations}
+
+Several limitations are worth naming plainly.
+
+\emph{Diagram quality has a ceiling.} A language model drawing SVG is good
+at clear, well-known concepts and weaker at dense or unusual ones. The
+critique-and-refine loop raises the floor but does not guarantee a beautiful
+result: the deterministic gate guarantees \emph{consistency}, not aesthetic
+quality --- a valid lesson can still be a plain one.
+
+\emph{Synchronization is at the segment level.} A group of parts is lit for
+a whole sentence, not each part at its spoken word. This was a deliberate
+trade for determinism and offline play; word-level highlighting would be
+more precise but would reintroduce timing data and fragility.
+
+\emph{Cold topics are slow and cost money.} The first request for a new
+topic pays for several model calls and speech synthesis and takes seconds.
+The cache hides this for repeated topics and the bounded loops cap the worst
+case, but the cold path is inherently the slow path.
+
+\emph{Generated markup must be treated as untrusted.} Rendering
+model-produced SVG in a WebView requires care; the WebView is restricted to
+the app's own highlight script and content-supplied script is not executed,
+but this remains an area demanding ongoing attention.
+
+\emph{Evaluation breadth.} The claims here are about verified system
+behaviour, not measured learning gains. No controlled user study, no large
+quantitative study of diagram quality across many topics, and no on-device
+latency or battery measurements across a fleet of devices have been
+performed; these are flagged as future work rather than claimed as results.

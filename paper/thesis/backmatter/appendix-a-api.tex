@@ -1,0 +1,91 @@
+%============================ APPENDIX A: API =================================
+\chapter{API Contract and Schemas}
+\label{app:api}
+
+\section{Endpoints}
+
+Base path: \texttt{/api/v1}, JSON over HTTPS. See Table~\ref{tab:api} for
+the endpoint summary; the request and response bodies are reproduced here.
+
+\subsection*{POST /lessons --- request}
+\begin{lstlisting}[style=code]
+{
+  "topic": "Photosynthesis",
+  "language": "en",
+  "voice": "en-US-neutral"
+}
+\end{lstlisting}
+
+\subsection*{POST /lessons --- 202 (generation started)}
+\begin{lstlisting}[style=code]
+{
+  "job_id": "job_3c1...",
+  "status": "queued",
+  "topic_key": "photosynthesis|en"
+}
+\end{lstlisting}
+
+A \texttt{200} response (cache hit) returns the full lesson manifest of
+Listing~\ref{lst:manifest} instead.
+
+\subsection*{GET /lessons/jobs/\{job\_id\} --- 200}
+\begin{lstlisting}[style=code]
+{
+  "job_id": "job_3c1...",
+  "status": "running",
+  "progress": 60,
+  "stage": "tts_rendering",
+  "lesson_id": null,
+  "error": null
+}
+\end{lstlisting}
+
+\texttt{status} $\in$ \{\texttt{queued}, \texttt{running},
+\texttt{succeeded}, \texttt{failed}\}; \texttt{stage} $\in$
+\{\texttt{planning}, \texttt{svg}, \texttt{narration},
+\texttt{validating}, \texttt{tts\_rendering}, \texttt{assembling}\}.
+
+\section{Error Envelope}
+
+All errors share one shape:
+
+\begin{lstlisting}[style=code]
+{
+  "error": {
+    "code": "GENERATION_FAILED",
+    "message": "Could not produce a valid diagram for this topic.",
+    "retryable": true,
+    "request_id": "req_9a2..."
+  }
+}
+\end{lstlisting}
+
+\begin{table}[htbp]
+\caption{Error codes}
+\label{tab:errors}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}clp{0.50\textwidth}@{}}
+\toprule
+\textbf{HTTP} & \textbf{Code} & \textbf{When}\\
+\midrule
+400 & \texttt{INVALID\_TOPIC} & Empty, too long, or unsupported characters\\
+404 & \texttt{LESSON\_NOT\_FOUND} / \texttt{JOB\_NOT\_FOUND} & Unknown id\\
+422 & \texttt{VALIDATION\_ERROR} & Malformed request body\\
+429 & \texttt{RATE\_LIMITED} & Too many requests\\
+500 & \texttt{GENERATION\_FAILED} & Graph exhausted repair retries or
+provider error\\
+503 & \texttt{PROVIDER\_UNAVAILABLE} & Upstream AI API down\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Conventions}
+
+Versioning is path-based (\texttt{/api/v1}); breaking changes move to
+\texttt{/v2}. \texttt{POST /lessons} is idempotent per topic key: repeated
+requests return the same job or the same cached lesson. Asset URLs are
+scoped and time-limited; the device downloads each asset once and thereafter
+uses local paths. No authentication exists in version~1 (there are no
+accounts); a header slot is reserved for a future API key.

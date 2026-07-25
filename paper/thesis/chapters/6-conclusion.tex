@@ -1,0 +1,77 @@
+%==============================================================================
+\chapter{Conclusion and Future Scope}
+\label{ch:conclusion}
+%==============================================================================
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+This thesis presented TutorAI, a complete, working system that turns a typed
+topic into a short, self-explaining lesson: a vector diagram whose parts
+carry stable semantic identifiers, segment-level narration tied to those
+identifiers, and per-segment synthesized audio that drives synchronized
+highlighting on an Android device --- fully offline once downloaded, with an
+on-device history and no user accounts.
+
+All six objectives set out in Section~\ref{sec:objectives} were met. An
+agentic generation pipeline was designed and implemented as a LangGraph state
+graph that transforms a free-text topic into a validated lesson
+(Objective~1). A deterministic, non-LLM validation gate with bounded
+critique-and-refine and repair loops guarantees that no lesson with a broken
+narration reference is ever cached or served, and this guarantee was verified
+in both directions --- rejection and repair of broken lessons, and clean
+failure when repair is exhausted (Objective~2). A stateless FastAPI backend
+provides the asynchronous job model, the shared topic-keyed cache with
+request coalescing, the asset store, and swappable Gemini provider adapters
+(Objective~3). An offline-first Android client built with Jetpack Compose,
+Clean Architecture, and MVVM generates lessons via job polling, plays them
+with deterministic segment-synchronized highlighting, and persists them for
+network-free replay (Objective~4). The engineering practice throughout ---
+UML-first design, classical patterns at the seams, 48 hermetic key-free
+tests, containerization, and CI/CD for both backend and client --- makes the
+system reproducible from a fresh clone (Objective~5). Finally, the realized
+system was verified end to end against live models, producing consistent
+lessons across topics as different as photosynthesis, the Pythagorean
+theorem, and the Transformer architecture (Objective~6).
+
+The central insight of the work is architectural rather than about any
+single model. By splitting generation into a small graph of steps, adding a
+bounded critique-and-refine loop for the drawing and a bounded repair loop
+for the narration, and placing a deterministic, non-LLM validator in front
+of the cache, a probabilistic generator is made reliable enough to power a
+feature that depends on exact part-to-word correspondence. Around this core,
+a stateless caching backend keeps cost down, provider adapters keep the
+vendor choice soft, and an offline-first client keeps the lesson usable
+without a network. The pattern --- probabilistic quality mechanisms in front
+of a deterministic correctness gate --- transfers directly to any
+application whose LLM outputs must satisfy machine-checkable invariants.
+
+\section{Future Scope}
+\label{sec:futurescope}
+
+Future work falls into three groups; none changes the central design ---
+each extends it.
+
+\textbf{Evaluation.} The most important next step is empirical: a controlled
+learning study comparing TutorAI lessons against static diagrams and plain
+text, grounded in the multimedia-learning predictions that motivated the
+product form; a larger automatic study of diagram quality and validator
+pass/repair/fail rates across hundreds of topics; and on-device latency,
+memory, and energy measurements across a range of phones.
+
+\textbf{Capability.} Several extensions are natural. Optional word-level
+highlighting where TTS timing metadata is available, degrading gracefully to
+segment-level sync offline. Richer diagram styles and layout hints from the
+planner. A research or planning step in front of the drawing (for example, a
+retrieval or deep-research agent behind the existing
+\texttt{LLMProvider.plan\_concepts} port) for harder or fast-moving topics.
+Multi-language lessons --- the manifest already carries language and voice
+parameters. Accessibility refinements such as adjustable playback speed and
+transcript export.
+
+\textbf{Scale.} The development profile's in-process worker and filesystem
+store can be promoted to a separate worker pool, a managed PostgreSQL cache,
+and cloud object storage behind the same repository interfaces, with no
+call-site changes. Server-sent events can replace job polling. A lightweight
+API key can be introduced through the header slot the contract already
+reserves, if usage ever warrants it.

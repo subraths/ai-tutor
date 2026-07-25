@@ -1,0 +1,329 @@
+%==============================================================================
+\chapter{Literature Survey}
+\label{ch:literature}
+%==============================================================================
+
+This chapter surveys the six bodies of work that TutorAI draws on:
+intelligent tutoring systems and AI in education; the cognitive theory of
+learning from words and pictures; large language models as content
+generators; agentic orchestration and self-correction of LLMs; automatic
+diagram and vector-graphics generation; and speech synthesis together with
+offline-first mobile architecture. Each section closes with the specific
+lesson the surveyed work contributes to this thesis, and the chapter closes
+with a summary table and the identified research gap.
+
+%------------------------------------------------------------------------------
+\section{Intelligent Tutoring Systems and AI in Education}
+%------------------------------------------------------------------------------
+
+The ambition of software that teaches is old and well studied. Bloom's
+influential ``2 sigma'' finding --- that students taught one-to-one by a human
+tutor performed about two standard deviations better than students in
+conventional classrooms --- framed the field's goal: find scalable methods of
+instruction as effective as individual tutoring~\cite{bloom1984}. Intelligent
+Tutoring Systems (ITS) pursued this goal by modelling the domain, the student,
+and pedagogy explicitly. Anderson \emph{et al.}'s cognitive tutors, grounded
+in the ACT-R theory of cognition, demonstrated that model-tracing tutors could
+achieve large learning gains in algebra and programming, and distilled a set
+of pragmatic design lessons from a decade of classroom
+deployment~\cite{anderson1995cognitive}. VanLehn's later meta-analysis
+compared human tutoring, step-based ITS, and answer-based systems, and found
+--- contrary to folklore --- that mature step-based tutoring systems were
+nearly as effective as human tutors (effect sizes of roughly 0.76 versus
+0.79)~\cite{vanlehn2011}. The catch has always been cost: classical ITS
+require painstaking, per-domain knowledge engineering, which is why they
+exist only for a handful of well-resourced subjects.
+
+The arrival of large language models changed the economics of educational
+content. Kasneci \emph{et al.} survey the opportunities and challenges of
+LLMs such as ChatGPT in education: on the one hand personalized explanations,
+instant feedback, and content generation at negligible marginal cost; on the
+other hand hallucination, bias, over-reliance, and the difficulty of
+verifying generated material~\cite{kasneci2023chatgpt}. This tension ---
+generation is now cheap but \emph{trustworthy} generation is not --- is the
+starting point of the present work.
+
+\emph{Lesson for TutorAI.} TutorAI does not attempt a full ITS: it has no
+student model and no adaptive curriculum. It automates one narrow, valuable
+tutoring behaviour --- pointing at a drawing while explaining it --- for an
+open set of topics, at near-zero marginal cost per repeated topic. Where a
+classical ITS invests in hand-built domain knowledge, TutorAI invests in
+\emph{verification} of machine-generated content.
+
+%------------------------------------------------------------------------------
+\section{Learning from Words and Pictures}
+%------------------------------------------------------------------------------
+
+Why insist on a diagram whose parts light up in time with speech, rather than
+a paragraph of text? The answer comes from cognitive psychology. Paivio's
+dual-coding theory holds that verbal and visual information are processed in
+separate channels and that learning is stronger when both are
+engaged~\cite{paivio1991}. Sweller's cognitive load theory adds that working
+memory is sharply limited, so instruction should avoid forcing the learner to
+hold and cross-reference disconnected representations~\cite{sweller1988}.
+
+Mayer's cognitive theory of multimedia learning operationalizes these ideas
+into evidence-backed design principles~\cite{mayer2014multimedia}. Three of
+them read almost as a specification of TutorAI's player. The
+\emph{multimedia principle}: people learn better from words and pictures than
+from words alone. The \emph{modality principle}: spoken narration
+accompanying a graphic beats on-screen text, because it spreads processing
+across the auditory and visual channels. The \emph{temporal contiguity} and
+\emph{signaling} principles: narration and the corresponding part of the
+graphic should be presented at the same time, and the learner's attention
+should be explicitly cued to the relevant part. Mayer and Moreno's survey of
+ways to reduce cognitive load in multimedia learning names synchronized
+narration-plus-highlighting as one of the most effective
+techniques~\cite{mayermoreno2003}.
+
+\emph{Lesson for TutorAI.} The product form --- segment-level narration,
+each segment simultaneously highlighting exactly the diagram parts it
+describes, with captions available --- is a direct implementation of the
+multimedia, modality, temporal-contiguity, and signaling principles. This
+grounding also explains why a \emph{broken} highlight (a narration segment
+pointing at a non-existent part) is not a cosmetic bug but a destruction of
+the pedagogical mechanism, and hence why the thesis treats reference
+consistency as a hard correctness property.
+
+%------------------------------------------------------------------------------
+\section{Large Language Models for Content Generation}
+%------------------------------------------------------------------------------
+
+The transformer architecture~\cite{vaswani2017attention} and the subsequent
+scaling of autoregressive language models established that a single
+pre-trained model can perform diverse generation tasks from natural-language
+instructions alone. Brown \emph{et al.} showed with GPT-3 that few-shot
+prompting suffices for many tasks without task-specific
+fine-tuning~\cite{brown2020gpt3}. The Gemini family extended this to natively
+multimodal models spanning text, code, images, and audio, with ``Flash''-class
+variants engineered for low latency and cost~\cite{gemini2023} --- the class
+of model TutorAI uses for planning, drawing, narration, and repair. Beyond
+prose, Chen \emph{et al.}'s Codex work demonstrated that LLMs trained on code
+generate syntactically constrained, machine-interpretable artifacts with
+useful reliability~\cite{chen2021codex}; generating SVG markup, as TutorAI
+does, is essentially structured code generation. Liu \emph{et al.}
+systematize prompting methods --- instruction design, output schemas,
+temperature control --- as the practical interface for steering such
+models~\cite{liu2023promptsurvey}.
+
+Two properties of LLM generation matter for this thesis. First,
+\emph{structured output}: modern APIs can constrain generation to a JSON
+schema, which TutorAI uses for plans, narration segments, and repair
+responses, validated by Pydantic on receipt. Second, \emph{hallucination}: Ji
+\emph{et al.}'s survey documents that language models produce fluent content
+untethered from their inputs across virtually all generation
+tasks~\cite{ji2023hallucination}. Schema-constrained output fixes the
+\emph{shape} of a response but not its \emph{referential truth}: narration can
+be perfectly valid JSON and still reference the identifier
+\texttt{mitochondria} when the drawing contains no such element.
+
+For completeness, raster text-to-image models such as Stable
+Diffusion~\cite{rombach2022stable} can also illustrate topics, but their
+output is pixels: there are no addressable parts, so nothing can be
+selectively highlighted, and no deterministic validator can check whether the
+image matches the narration. This rules them out for TutorAI's purpose and
+motivates vector output.
+
+\emph{Lesson for TutorAI.} Use an LLM for what it is good at (planning,
+drawing well-known concepts, fluent narration, structured JSON), but treat
+referential consistency as a property to be \emph{checked deterministically},
+never assumed.
+
+%------------------------------------------------------------------------------
+\section{LLM Agents, Orchestration, and Self-Correction}
+%------------------------------------------------------------------------------
+
+A second line of work addresses reliability by wrapping the model in a
+\emph{process}. Chain-of-thought prompting showed that eliciting intermediate
+reasoning steps improves accuracy on multi-step problems~\cite{wei2022cot}.
+ReAct interleaved reasoning with tool-using actions, letting a model gather
+facts and act on feedback~\cite{yao2023react}. Most directly relevant are the
+self-correction methods: Self-Refine has the model critique and then improve
+its own output iteratively~\cite{madaan2023selfrefine}; Reflexion converts
+environment feedback into verbal self-reflections that improve subsequent
+attempts~\cite{shinn2023reflexion}; and Chen \emph{et al.} teach models to
+self-debug generated code against execution feedback~\cite{chen2023selfdebug}.
+A consistent finding across these papers is that critique grounded in
+\emph{concrete, externally produced error signals} (failing tests, parser
+errors) outperforms free-form self-assessment.
+
+Orchestration frameworks make such processes buildable. LangChain provides
+the component model for prompts, models, and tools~\cite{langchain}, and
+LangGraph structures an application as an explicit state graph --- typed
+state flowing through nodes, with conditional edges for loops --- rather than
+an open-ended autonomous loop~\cite{langgraph}. The graph form matters for
+production systems: it makes control flow inspectable, each node separately
+testable, and loop budgets explicit.
+
+\emph{Lesson for TutorAI.} TutorAI adopts decomposition
+(plan~$\to$~draw~$\to$~narrate), a bounded critique-and-refine loop for the
+drawing, and a bounded repair loop driven by a validator's exact error list
+--- the ``self-debugging with real feedback'' pattern. It deliberately
+rejects open-ended agency: the graph is small, static, and every loop has a
+configured budget, so worst-case cost and latency are capped. The novel
+element relative to the surveyed work is that the final arbiter is not the
+model's own judgement but a deterministic, non-LLM gate that enforces a
+cross-artifact invariant before anything is cached.
+
+%------------------------------------------------------------------------------
+\section{Automatic Diagram and Vector-Graphics Generation}
+%------------------------------------------------------------------------------
+
+TutorAI needs drawings whose parts are \emph{addressable}. SVG, a W3C
+standard, represents images as an XML document tree in which any element can
+carry an \texttt{id} attribute and be styled or animated
+individually~\cite{svgspec} --- precisely the property synchronized
+highlighting requires, and one no raster format offers.
+
+Prior work on generating vector graphics spans learned latent models and
+direct code generation. DeepSVG learns a hierarchical generative network over
+SVG path commands, targeting interpolation and animation of icon-scale
+graphics~\cite{carlier2020deepsvg}. StarVector treats SVG as code and
+generates it with a multimodal LLM from images or text, showing that
+modern code models internalize the SVG grammar
+well~\cite{rodriguez2023starvector}. General code-generation results
+\cite{chen2021codex} support the same conclusion. However, none of these
+systems constrain the \emph{semantics of identifiers}: they produce plausible
+markup, not markup whose element ids form a contract with a separately
+generated narration. Template- and grammar-based diagram tools (of which
+Mermaid is a popular example) guarantee well-formedness by construction, but
+only within a fixed diagram vocabulary (flowcharts, sequence diagrams), which
+is too narrow for arbitrary educational topics like photosynthesis or the
+water cycle.
+
+\emph{Lesson for TutorAI.} Have the LLM draw free-form SVG (breadth), impose
+an \emph{id contract} through prompting (every meaningful element gets a
+semantic id; narration may reference only existing ids), and enforce the
+contract with an XML parser rather than trusting the model (reliability).
+Quality is then raised --- not guaranteed --- by the critique-and-refine
+loop.
+
+%------------------------------------------------------------------------------
+\section{Speech Synthesis and Narrated Content}
+%------------------------------------------------------------------------------
+
+Neural TTS made synthesized narration acceptable for learning content.
+WaveNet demonstrated autoregressive generation of raw audio waveforms with
+naturalness far beyond concatenative systems~\cite{oord2016wavenet}, and
+Tacotron~2 established the now-standard text~$\to$~mel-spectrogram~$\to$
+vocoder pipeline achieving near-human mean opinion scores~\cite{shen2018tacotron2}.
+Today, hosted TTS services (including Gemini's speech models) expose this
+capability behind an API that returns audio for text.
+
+The synchronization question --- how to keep visuals aligned with speech ---
+is usually answered with word-level timestamps or forced alignment, which
+requires either streaming infrastructure or per-word timing metadata, both
+fragile on an offline mobile target. The alternative TutorAI adopts is
+coarser but deterministic: synthesize one clip per narration segment,
+\emph{measure} its exact duration from the PCM byte count and sample rate,
+and drive highlighting from clip boundaries. Synchronization then requires no
+timing data beyond what the device player already knows (which clip is
+playing), and it survives offline replay trivially.
+
+\emph{Lesson for TutorAI.} Segment-level synchronization trades pointer
+granularity for determinism and offline robustness --- an explicit,
+defensible design decision grounded in the target environment.
+
+%------------------------------------------------------------------------------
+\section{Offline-First Mobile Applications and Software Architecture}
+%------------------------------------------------------------------------------
+
+Offline-first design treats the network as an enhancement rather than a
+prerequisite: applications keep a complete local copy of the data they need
+and synchronize opportunistically~\cite{offlinefirst}. For a learning tool
+aimed partly at users with intermittent connectivity, this is a requirement,
+not a preference. On Android, Google's architecture guidance recommends a
+layered structure --- UI, domain, and data layers with unidirectional data
+flow and reactive state~\cite{androidguide} --- which TutorAI follows using
+Jetpack Compose, ViewModels exposing immutable state via \texttt{StateFlow},
+Room for structured storage, and a private file store for binary assets.
+
+At the level of software structure, Martin's Clean Architecture argues for
+dependency inversion: business rules at the centre, frameworks and I/O at the
+edges, boundaries crossed through interfaces~\cite{martin2017clean}. The
+classical design-patterns catalogue~\cite{gamma1994} supplies the vocabulary
+TutorAI uses at its seams --- Strategy, Abstract Factory, Adapter, Builder,
+Facade, Repository --- and the Twelve-Factor App methodology supplies the
+operational discipline of strict configuration-through-environment
+\cite{twelvefactor}, which is what lets the same codebase run on mock
+providers in tests and real Gemini providers in production, and lets hosted
+model identifiers be pinned in configuration rather than code.
+
+\emph{Lesson for TutorAI.} None of these practices is novel individually;
+the survey point is that an AI-centred system still succeeds or fails on
+ordinary architectural discipline. The provider adapters, hermetic tests, and
+configuration-first design described in Chapters~\ref{ch:methodology}
+and~\ref{ch:design} are direct applications of this literature.
+
+%------------------------------------------------------------------------------
+\section{Summary and Research Gap}
+%------------------------------------------------------------------------------
+
+Table~\ref{tab:litsummary} condenses the survey.
+
+\begin{table}[htbp]
+\caption{Summary of the literature surveyed and its role in this thesis}
+\label{tab:litsummary}
+\centering
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{@{}p{0.26\textwidth}p{0.30\textwidth}p{0.34\textwidth}@{}}
+\toprule
+\textbf{Area (key works)} & \textbf{Established result} & \textbf{Use in TutorAI}\\
+\midrule
+ITS / AI in education
+\cite{bloom1984,anderson1995cognitive,vanlehn2011,kasneci2023chatgpt}
+& Tutoring software works but classical ITS need costly per-domain
+engineering; LLMs make content cheap but unverified.
+& Automate one tutoring behaviour (point-and-explain) for open topics;
+invest in verification instead of hand-built domain knowledge.\\
+Multimedia learning
+\cite{paivio1991,sweller1988,mayer2014multimedia,mayermoreno2003}
+& Synchronized narration + signaled graphics measurably improve learning.
+& Defines the product form; makes reference consistency a hard
+correctness property.\\
+LLMs for generation
+\cite{vaswani2017attention,brown2020gpt3,gemini2023,chen2021codex,liu2023promptsurvey,ji2023hallucination}
+& LLMs generate prose, code, and structured data well, but hallucinate;
+schemas fix shape, not referential truth.
+& Gemini via adapters; structured-output prompts; motivates the
+deterministic gate.\\
+Agents / self-correction
+\cite{wei2022cot,yao2023react,madaan2023selfrefine,shinn2023reflexion,chen2023selfdebug,langchain,langgraph}
+& Decomposition and critique on concrete error signals improve
+reliability; graphs make agent control flow explicit.
+& LangGraph pipeline; bounded critique-and-refine; repair loop fed by
+validator errors.\\
+Vector-graphics generation
+\cite{svgspec,carlier2020deepsvg,rodriguez2023starvector,rombach2022stable}
+& LLMs can write SVG; raster models offer no addressable parts; grammar
+tools are narrow.
+& Free-form LLM-drawn SVG under a prompted id contract, enforced by an
+XML parser.\\
+TTS \cite{oord2016wavenet,shen2018tacotron2}
+& Neural TTS is natural enough for narration; word-level sync needs
+fragile timing data.
+& Per-segment clips with byte-measured durations; segment-level sync.\\
+Mobile / architecture
+\cite{offlinefirst,androidguide,martin2017clean,gamma1994,twelvefactor}
+& Offline-first, layered architecture, patterns, and 12-factor config are
+proven practice.
+& Clean Architecture + MVVM client; provider adapters; hermetic key-free
+tests; container + CI/CD.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Research gap.} Each ingredient above exists in isolation: LLMs that
+draw SVG, agent frameworks with self-correction, multimedia-learning theory
+prescribing synchronized narration, and offline-first mobile practice. What
+the surveyed literature does not provide is a system that \emph{combines}
+them under a hard cross-artifact consistency guarantee --- narration that is
+machine-checked, before caching, to reference only diagram elements that
+exist --- delivered end to end on an offline-first mobile client with
+deterministic audio--visual synchronization. Published self-correction work
+validates outputs against tests or environments for a \emph{single} artifact;
+TutorAI's gate validates the \emph{joint} consistency of two independently
+generated artifacts (drawing and narration) and refuses service rather than
+degrade. Closing that gap --- and demonstrating it with a verified, tested,
+deployable implementation --- is the contribution of this thesis.
